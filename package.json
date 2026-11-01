@@ -1,0 +1,14 @@
+{
+  "name": "speedometer-t-rex-3",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "test": "node tests/trip.test.mjs && node tests/page.test.mjs",
+    "build": "zpm build --target t-rex-3 --jsc bin && node scripts/check-build.cjs",
+    "preview": "node scripts/zeus.cjs preview"
+  },
+  "devDependencies": {
+    "@zeppos/zeus-cli": "1.9.3",
+    "@zeppos/zpm": "3.4.2"
+  }
+}

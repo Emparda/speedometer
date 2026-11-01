@@ -1,0 +1,61 @@
+{
+  "configVersion": "v2",
+  "app": {
+    "appId": 1029117,
+    "appName": "Speedometer",
+    "appType": "app",
+    "version": {
+      "code": 1,
+      "name": "1.0.0"
+    },
+    "icon": "icon.png",
+    "vender": "Independent",
+    "description": "Minimal GPS speedometer. km/h, maximum speed, trip distance and time."
+  },
+  "permissions": [
+    "device:os.geolocation",
+    "device:os.local_storage"
+  ],
+  "runtime": {
+    "apiVersion": {
+      "compatible": "3.0.0",
+      "target": "3.0.0",
+      "minVersion": "3.0.0"
+    }
+  },
+  "targets": {
+    "t-rex-3": {
+      "module": {
+        "page": {
+          "pages": [
+            "page/index"
+          ]
+        }
+      },
+      "platforms": [
+        {
+          "name": "Amazfit T-Rex 3",
+          "deviceSource": 8716544
+        },
+        {
+          "name": "Amazfit T-Rex 3",
+          "deviceSource": 8716545
+        },
+        {
+          "name": "Amazfit T-Rex 3",
+          "deviceSource": 8716547
+        }
+      ],
+      "designWidth": 480
+    }
+  },
+  "i18n": {
+    "en-US": {
+      "appName": "Speedometer"
+    },
+    "ru-RU": {
+      "appName": "Speedometer"
+    }
+  },
+  "defaultLanguage": "en-US"
+}
