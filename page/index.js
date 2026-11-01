@@ -73,12 +73,11 @@ Page({
       this.status = this.text(401, 27, 19, '', MUTED)
       this.status.addEventListener(ui.event.CLICK_UP, () => { this.screen = 'trip'; this.render() })
     } else {
-      this.text(51, 35, 24, 'ПОЕЗДКА', MUTED)
       this.text(101, 25, 19, 'МАКСИМУМ · КМ/Ч', MUTED)
       this.maximum = this.text(126, 61, 48, '')
       this.text(200, 24, 19, 'РАССТОЯНИЕ · КМ', MUTED)
       this.distance = this.text(225, 58, 44, '')
-      this.text(293, 24, 19, 'ВРЕМЯ ПОЕЗДКИ', MUTED)
+      this.text(293, 24, 19, 'ВРЕМЯ', MUTED)
       this.elapsed = this.text(318, 45, 34, '')
       this.button(90, 372, 142, 'Назад', () => { this.resetUntil = 0; this.screen = 'speed'; this.render() })
       this.button(248, 372, 142, this.resetUntil ? 'Точно?' : 'Сброс', () => {
