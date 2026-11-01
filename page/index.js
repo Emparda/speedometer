@@ -1,3 +1,5 @@
+import { BasePage } from '@zeppos/zml/base-page'
+import { Outbox, OUTBOX_KEY } from '../lib/history'
 import * as ui from '@zos/ui'
 import { Geolocation } from '@zos/sensor'
 import { LocalStorage } from '@zos/storage'
@@ -9,17 +11,27 @@ const CREAM = 0xeee6da
 const MUTED = 0x69757b
 const STORE_KEY = 'speedometer.trip.v1'
 
-Page({
+Page(BasePage({
   build() {
     this.storage = new LocalStorage()
     let saved = null
     try { saved = this.storage.getItem(STORE_KEY) } catch (_) {}
     this.trip = new Trip(saved)
+    this.sessionTrip = new Trip()
+    this.sessionStartedAt = Date.now()
+    this.sessionId = String(this.sessionStartedAt) + '-' + Math.floor(Math.random() * 0x100000000).toString(16)
+    this.sessionRevision = 0
+    let pending = []
+    try { pending = this.storage.getItem(OUTBOX_KEY) } catch (_) {}
+    this.outbox = new Outbox(pending)
+    this.syncBusy = false
+    this.destroyed = false
     this.widgets = []
     this.screen = 'speed'
     this.resetUntil = 0
     this.lastSave = Date.now()
     this.trip.tick(this.lastSave)
+    this.sessionTrip.tick(this.lastSave)
     this.gpsError = false
     setScrollLock({ lock: true })
     setPageBrightTime({ brightTime: 3600000 })
@@ -29,24 +41,31 @@ Page({
     this.onFix = () => {
       try {
         if (this.gps.getStatus() === 'A') {
-          this.trip.sample(this.gps.getLatitude({ format: 'DD' }), this.gps.getLongitude({ format: 'DD' }), Date.now())
+          const lat = this.gps.getLatitude({ format: 'DD' })
+          const lon = this.gps.getLongitude({ format: 'DD' })
+          const now = Date.now()
+          this.trip.sample(lat, lon, now)
+          this.sessionTrip.sample(lat, lon, now)
           this.gpsError = false
-        } else this.trip.loseFix()
-      } catch (_) { this.gpsError = true; this.trip.loseFix() }
+        } else { this.trip.loseFix(); this.sessionTrip.loseFix() }
+      } catch (_) { this.gpsError = true; this.trip.loseFix(); this.sessionTrip.loseFix() }
       this.update()
     }
     try { this.gps.onChange(this.onFix); this.gps.start() } catch (_) { this.gpsError = true }
     this.timer = setInterval(() => {
       const now = Date.now()
       this.trip.tick(now)
+      this.sessionTrip.tick(now)
       if (this.resetUntil && now > this.resetUntil) {
         this.resetUntil = 0
         if (this.screen === 'trip') this.render()
       }
-      if (now - this.lastSave >= 10000) { this.save(); this.lastSave = now }
+      if (now - this.lastSave >= 10000) { this.save(); this.checkpoint(false); this.syncHistory(); this.lastSave = now }
       this.update()
     }, 1000)
     this.update()
+    this.checkpoint(false)
+    this.syncHistory()
   },
   add(type, options) {
     const w = ui.createWidget(type, options)
@@ -105,16 +124,43 @@ Page({
       this.elapsed.setProperty(ui.prop.TEXT, duration(this.trip.elapsed))
     }
   },
+  persistOutbox() {
+    try { this.storage.setItem(OUTBOX_KEY, this.outbox.records); return true } catch (_) { return false }
+  },
+  checkpoint(closed) {
+    this.outbox.put({ id: this.sessionId, startedAt: this.sessionStartedAt,
+      updatedAt: Date.now(), revision: ++this.sessionRevision, closed,
+      ...this.sessionTrip.snapshot() })
+    this.persistOutbox()
+  },
+  async syncHistory() {
+    if (this.syncBusy || this.destroyed) return
+    this.syncBusy = true
+    try {
+      // Small messages and acknowledgements: safe to retry after disconnect.
+      for (let i = 0; i < 5 && !this.destroyed && this.outbox.next(); i++) {
+        const record = { ...this.outbox.next() }
+        const ack = await this.request({ method: 'history.put', params: { record } })
+        if (this.destroyed) break
+        if (!ack || ack.id !== record.id || ack.revision !== record.revision) break
+        this.outbox.ack(ack.id, ack.revision)
+        this.persistOutbox()
+      }
+    } catch (_) { /* Retry on next checkpoint while app is open. */ }
+    finally { this.syncBusy = false }
+  },
   save() {
     try { this.storage.setItem(STORE_KEY, this.trip.snapshot()) } catch (_) {}
   },
   onDestroy() {
+    this.destroyed = true
     if (this.timer) clearInterval(this.timer)
     if (this.gps) {
       try { this.gps.offChange(this.onFix); this.gps.stop() } catch (_) {}
     }
     if (this.trip) { this.trip.tick(Date.now()); this.save() }
+    if (this.sessionTrip) { this.sessionTrip.tick(Date.now()); this.checkpoint(true) }
     resetDropWristScreenOff()
     resetPageBrightTime()
   }
-})
+}))

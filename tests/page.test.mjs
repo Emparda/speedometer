@@ -2,9 +2,12 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
-const source = readFileSync(new URL('../page/index.js', import.meta.url), 'utf8').replace(/^import .*\n/gm, '')
+const source = readFileSync(new URL('../page/index.js', import.meta.url), 'utf8').replace(/^import [^\n]*\n/gm, '')
 const tripSource = readFileSync(new URL('../lib/trip.js', import.meta.url), 'utf8')
 const { Trip, duration } = await import('data:text/javascript;base64,' + Buffer.from(tripSource).toString('base64'))
+
+const historySource = readFileSync(new URL('../lib/history.js', import.meta.url), 'utf8')
+const { Outbox, OUTBOX_KEY } = await import('data:text/javascript;base64,' + Buffer.from(historySource).toString('base64'))
 
 function harness() {
   let page, now = 1000, timer, stopped = false, unsubscribed = false, cleared = false
@@ -20,8 +23,8 @@ function harness() {
   class Storage { getItem(k) { return data.get(k) } setItem(k, v) { data.set(k, v) } }
   class Clock extends Date { constructor() { super(now) } static now() { return now } }
   const nop = () => {}
-  vm.runInNewContext(source, { ui, Trip, duration, Date: Clock, LocalStorage: Storage, Geolocation: GPS,
-    Page(p) { page = p }, setScrollLock: nop, setPageBrightTime: nop, resetPageBrightTime: nop,
+  vm.runInNewContext(source, { ui, Trip, duration, Outbox, OUTBOX_KEY, BasePage: x => x, Date: Clock, LocalStorage: Storage, Geolocation: GPS,
+    Page(p) { page = p; page.request = () => Promise.reject(new Error('offline')) }, setScrollLock: nop, setPageBrightTime: nop, resetPageBrightTime: nop,
     pauseDropWristScreenOff: nop, resetDropWristScreenOff: nop,
     setInterval(cb) { timer = cb; return 1 }, clearInterval() { cleared = true } })
   page.build()
