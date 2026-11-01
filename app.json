@@ -2,7 +2,7 @@
   "configVersion": "v2",
   "app": {
     "appId": 1029117,
-    "appName": "Speedometer",
+    "appName": "Спидометр",
     "appType": "app",
     "version": {
       "code": 1,
@@ -51,10 +51,10 @@
   },
   "i18n": {
     "en-US": {
-      "appName": "Speedometer"
+      "appName": "Спидометр"
     },
     "ru-RU": {
-      "appName": "Speedometer"
+      "appName": "Спидометр"
     }
   },
   "defaultLanguage": "en-US"
