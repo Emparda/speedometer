@@ -5,12 +5,12 @@
     "appName": "Спидометр",
     "appType": "app",
     "version": {
-      "name": "1.1.1",
-      "code": 3
+      "name": "1.2.0",
+      "code": 6
     },
     "icon": "icon.png",
     "vender": "Independent",
-    "description": "Minimal GPS speedometer. km/h, maximum speed, trip distance and time."
+    "description": "GPS speedometer with manual saved results on the watch."
   },
   "permissions": [
     "device:os.geolocation",
@@ -30,12 +30,6 @@
           "pages": [
             "page/index"
           ]
-        },
-        "app-side": {
-          "path": "app-side/index"
-        },
-        "setting": {
-          "path": "setting/index"
         }
       },
       "platforms": [

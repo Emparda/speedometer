@@ -1,59 +1,125 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import vm from 'node:vm'
-const source = readFileSync(new URL('../page/index.js', import.meta.url), 'utf8').replace(/^import [^\n]*\n/gm, '')
-const tripSource = readFileSync(new URL('../lib/trip.js', import.meta.url), 'utf8')
-const { Trip, duration } = await import('data:text/javascript;base64,' + Buffer.from(tripSource).toString('base64'))
+import { harness, result, RESULTS_KEY } from './harness.mjs'
 
-const historySource = readFileSync(new URL('../lib/history.js', import.meta.url), 'utf8')
-const { Outbox, OUTBOX_KEY } = await import('data:text/javascript;base64,' + Buffer.from(historySource).toString('base64'))
+test('auto-start, stop freezes all metrics, restart resets; never auto-saves', () => {
+  const h = harness(), p = h.page
+  assert.equal(p.running, true); assert.ok(p.loading)
+  h.fix(); h.advance(4000); h.fix()
+  assert.equal(p.value.text, '36')
+  assert.equal(p.loading, null)
+  h.click('Стоп')
+  assert.equal(h.activeTimers(), 0); assert.equal(h.gps.running, false)
+  const frozen = JSON.stringify(p.measurement.snapshot())
+  h.advance(100000); h.lateFix()
+  assert.equal(JSON.stringify(p.measurement.snapshot()), frozen)
+  assert.equal(h.writes.length, 0)
+  h.click('Запуск')
+  assert.equal(p.measurement.elapsed, 0); assert.equal(p.measurement.max, 0)
+  assert.equal(p.measurement.distance, 0); assert.ok(p.loading)
+  p.onDestroy(); assert.equal(h.writes.length, 0)
+})
 
-function harness() {
-  let page, now = 1000, timer, stopped = false, unsubscribed = false, cleared = false
-  const data = new Map()
-  const widgets = []
-  const enumProxy = new Proxy({}, { get: (_, key) => key })
-  const ui = { widget: enumProxy, align: enumProxy, prop: enumProxy, event: enumProxy,
-    createWidget(type, props) {
-      const w = { type, ...props, events: {}, setProperty(k, v) { this[k === 'TEXT' ? 'text' : k] = v }, addEventListener(k, v) { this.events[k] = v } }
-      widgets.push(w); return w
-    }, deleteWidget(w) { widgets.splice(widgets.indexOf(w), 1) } }
-  class GPS { onChange(cb) { this.callback = cb } start() {} stop() { stopped = true } offChange(cb) { unsubscribed = cb === this.callback } getStatus() { return 'A' } getLatitude() { return 0 } getLongitude() { return (now - 1000) / 1000 * 10 / 6371000 * 180 / Math.PI } }
-  class Storage { getItem(k) { return data.get(k) } setItem(k, v) { data.set(k, v) } }
-  class Clock extends Date { constructor() { super(now) } static now() { return now } }
-  const nop = () => {}
-  vm.runInNewContext(source, { ui, Trip, duration, Outbox, OUTBOX_KEY, BasePage: x => x, Date: Clock, LocalStorage: Storage, Geolocation: GPS,
-    Page(p) { page = p; page.request = () => Promise.reject(new Error('offline')) }, setScrollLock: nop, setPageBrightTime: nop, resetPageBrightTime: nop,
-    pauseDropWristScreenOff: nop, resetDropWristScreenOff: nop,
-    setInterval(cb) { timer = cb; return 1 }, clearInterval() { cleared = true } })
-  page.build()
-  return { page, widgets, data, advance(t) { now = t; timer() }, cleanup() { return stopped && unsubscribed && cleared } }
+test('manual save is an immutable snapshot without stopping; no duplicates while stopped', () => {
+  const h = harness(), p = h.page
+  h.fix(); h.advance(4000); h.fix(); h.swipe('GESTURE_UP')
+  h.click('Сохранить')
+  assert.equal(p.running, true); assert.equal(p.records.length, 1)
+  const saved = JSON.stringify(p.records[0])
+  h.advance(7000); h.fix()
+  assert.equal(JSON.stringify(p.records[0]), saved)
+  h.click('Сохранить'); assert.equal(p.records.length, 2)
+  p.stopMeasurement(); p.saveSnapshot(); const count = p.records.length
+  p.saveSnapshot(); assert.equal(p.records.length, count)
+  p.onDestroy()
+  const reopened = harness({ data: h.data })
+  assert.equal(reopened.page.records.length, count)
+  assert.equal(reopened.page.measurement.elapsed, 0)
+  reopened.page.onDestroy()
+})
+
+test('gesture list scrolls, keys change screen immediately, boundaries do not wrap', () => {
+  const h = harness({ records: Array.from({length: 6}, (_, i) => result(i)) }), p = h.page
+  h.swipe('GESTURE_DOWN'); assert.equal(p.screenIndex, 0)
+  h.swipe('GESTURE_UP'); assert.equal(p.screenIndex, 1)
+  h.swipe('GESTURE_UP'); assert.equal(p.screenIndex, 2)
+  h.swipe('GESTURE_UP'); assert.equal(p.listOffset, 1)
+  h.key('KEY_UP'); assert.equal(p.screenIndex, 1)
+  h.key('KEY_DOWN'); assert.equal(p.screenIndex, 2); assert.equal(p.listOffset, 0)
+  h.swipe('GESTURE_UP'); h.swipe('GESTURE_DOWN'); assert.equal(p.listOffset, 0); assert.equal(p.screenIndex, 2)
+  h.swipe('GESTURE_DOWN'); assert.equal(p.screenIndex, 1)
+  h.key('KEY_DOWN'); for (let i=0;i<10;i++) h.swipe('GESTURE_UP')
+  assert.equal(p.listOffset, 4); assert.equal(p.screenIndex, 2)
+  h.key('KEY_DOWN'); assert.equal(p.screenIndex, 2)
+  assert.equal(p.running, true); p.onDestroy()
+})
+
+test('long press selects, swipe does not delete; choose multiple cards and delete', () => {
+  const h = harness({ records: [result(1), result(2), result(3)] }), p = h.page
+  p.navigate(1); p.navigate(1)
+  let card = h.cards()[0]
+  card.events.CLICK_DOWN(); card.events.MOVE(); h.advance(1700)
+  assert.equal(p.editing, false)
+  card.events.CLICK_DOWN(); h.advance(2400)
+  assert.equal(p.editing, true); assert.deepEqual(Array.from(p.selected), ['r1'])
+  card = h.cards()[1]; card.events.CLICK_DOWN(); card.events.CLICK_UP()
+  assert.equal(p.selected.length, 2)
+  h.click('Удалить')
+  assert.equal(p.records.length, 1); assert.equal(p.records[0].id, 'r3')
+  assert.equal(JSON.parse(h.data.get(RESULTS_KEY)).length, 1)
+  p.onDestroy()
+})
+
+test('20-record cap does not evict; save after explicit deletion', () => {
+  const h = harness({ records: Array.from({length:20},(_,i)=>result(i)) }), p=h.page
+  p.navigate(1); h.click('Сохранить')
+  assert.equal(p.records.length,20); assert.equal(h.writes.length,0); assert.equal(p.screenIndex,2)
+  p.selected=['r19']; p.removeSelected(); assert.equal(p.records.length,19)
+  p.navigate(-1); h.click('Сохранить'); assert.equal(p.records.length,20)
+  p.onDestroy()
+})
+
+test('failed writes preserve records; corrupt storage is not overwritten', () => {
+  const h=harness({ records:[result(1)], failWrites:true }),p=h.page
+  p.saveSnapshot(); assert.equal(p.records.length,1)
+  p.selected=['r1']; p.removeSelected(); assert.equal(p.records.length,1)
+  p.onDestroy()
+  const broken=harness({ data:new Map([[RESULTS_KEY,'broken']]) })
+  broken.page.saveSnapshot(); assert.equal(broken.writes.length,0)
+  assert.ok(broken.page.storageError); broken.page.onDestroy()
+})
+
+for (const exit of ['screenOff','KEY_BACK','KEY_HOME','GESTURE_RIGHT','pageDestroy','appDestroy']) {
+  test('no recording/timers/animation after '+exit, () => {
+    const h=harness(),p=h.page
+    h.fix(); h.advance(4000); h.fix()
+    if(exit==='screenOff') h.screen(2)
+    else if(exit==='pageDestroy') p.onDestroy()
+    else if(exit==='appDestroy') h.app.onDestroy()
+    else if(exit==='GESTURE_RIGHT') h.swipe(exit)
+    else h.key(exit)
+    const frozen=JSON.stringify(p.measurement.snapshot())
+    assert.equal(p.running,false); assert.equal(h.gps.running,false)
+    assert.equal(h.gps.callback,null); assert.equal(h.activeTimers(),0); assert.equal(p.loading,null)
+    h.advance(500000); h.lateFix()
+    assert.equal(JSON.stringify(p.measurement.snapshot()),frozen); assert.equal(h.writes.length,0)
+    if(exit==='screenOff') { h.screen(1); assert.equal(p.running,false); assert.ok(h.widgets.some(w=>w.text==='Запуск')) }
+    p.onDestroy(); p.onDestroy(); assert.equal(h.activeTimers(),0)
+    assert.equal(h.screenSensor.callback,null); assert.equal(h.input.key,null); assert.equal(h.input.gesture,null)
+  })
 }
 
-test('screen navigation, GPS update, two-tap reset, cleanup and persistence', () => {
-  const h = harness(), p = h.page
-  assert.equal(p.value.text, '—')
-  p.onFix(); h.advance(4000); p.onFix()
-  assert.equal(p.value.text, '36')
-  p.value.events.CLICK_UP()
-  assert.equal(p.maximum.text, '36')
-  assert.equal(p.distance.text, '0.03')
-  h.widgets.find(w => w.text === 'Сброс').click_func()
-  assert.ok(p.trip.distance > 0)
-  h.widgets.find(w => w.text === 'Точно?').click_func()
-  assert.equal(p.trip.distance, 0)
-  assert.equal(p.maximum.text, '0')
-  p.onDestroy()
-  assert.ok(h.cleanup())
-  assert.equal(h.data.get('speedometer.trip.v1').distance, 0)
+test('long press timer is cancelled when display switches off', () => {
+  const h=harness({ records:[result(1)] });h.page.navigate(1);h.page.navigate(1)
+  h.cards()[0].events.CLICK_DOWN(); h.screen(2)
+  assert.equal(h.activeTimers(),0);h.advance(10000);assert.equal(h.page.editing,false)
+  h.page.onDestroy()
 })
-test('reset confirmation expires without deleting the trip', () => {
-  const h = harness(), p = h.page
-  p.onFix(); h.advance(4000); p.onFix(); p.value.events.CLICK_UP()
-  h.widgets.find(w => w.text === 'Сброс').click_func()
-  h.advance(9000)
-  assert.ok(h.widgets.some(w => w.text === 'Сброс'))
-  assert.ok(p.trip.distance > 0)
-  p.onDestroy()
+
+test('configuration has no phone module, background service or ZML dependency', () => {
+  const manifest=JSON.parse(readFileSync(new URL('../app.json',import.meta.url)))
+  assert.deepEqual(Object.keys(manifest.targets['t-rex-3'].module),['page'])
+  const pkg=JSON.parse(readFileSync(new URL('../package.json',import.meta.url)))
+  assert.equal(pkg.dependencies?.['@zeppos/zml'],undefined)
 })

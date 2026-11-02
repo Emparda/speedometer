@@ -1,2 +1,9 @@
-import { BaseApp } from '@zeppos/zml/base-app'
-App(BaseApp({ globalData: {}, onCreate() {}, onDestroy() {} }))
+App({
+  globalData: { stopMeasurement: null },
+  onCreate() {},
+  onDestroy() {
+    const stop = this.globalData.stopMeasurement
+    if (stop) stop()
+    this.globalData.stopMeasurement = null
+  }
+})
