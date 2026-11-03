@@ -1,6 +1,6 @@
 # Спидометр 1.2.7 — Amazfit T-Rex 3
 
-<img width="400" height="400" alt="Speedometer-1 2 6-preview-transparent" src="https://github.com/user-attachments/assets/73c2a39c-ff32-4a7b-a89b-da3716aa4753" />
+<img width="400" height="400" alt="Speedometer-1 2 6-preview-transparent" src="https://github.com/user-attachments/assets/2359d2db-ea2d-4c9a-9d23-5e4087a5fa27" />
 
 ## Фон и батарея
 
