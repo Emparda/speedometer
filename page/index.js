@@ -10,8 +10,8 @@ import { RESULTS_KEY, MAX_RESULTS, readResults, saveResult, deleteResults, dateL
 const CREAM = 0xeee6da
 const MUTED = 0x69757b
 const BUTTON = 0x15191b
-const SCROLL_ARC_START = 157
-const SCROLL_ARC_END = 203
+const SCROLL_ARC_START = 150
+const SCROLL_ARC_END = 210
 
 Page({
   build() {
@@ -112,6 +112,7 @@ Page({
   stopMeasurement() {
     this.touch = null
     this.cancelTransition()
+    Object.keys(this.scenes).forEach(index => this.hideScrollbar(this.scenes[index]))
     if (this.running) this.measurement.tick(Date.now())
     this.running = false
     if (this.timer !== undefined && this.timer !== null) clearInterval(this.timer)
@@ -145,6 +146,7 @@ Page({
   prepareSlide(direction) {
     if (this.slide && this.slide.direction === direction) return
     this.cancelTransition()
+    this.hideScrollbar(this.scenes[2])
     setScrollLock({ lock: true })
     const next = (this.screenIndex + direction + 3) % 3
     this.createScene(next, direction * 480)
@@ -200,6 +202,7 @@ Page({
   destroyScene(index) {
     const scene = this.scenes[index]
     if (!scene) return
+    this.hideScrollbar(scene)
     this.stopLoading(scene)
     scene.widgets.forEach(entry => ui.deleteWidget(entry.w))
     delete this.scenes[index]
@@ -245,6 +248,7 @@ Page({
       touch.moved = true
       this.cancelHold()
     }
+    if (touch.zone === 'list' && Math.abs(dy) > 8 && Math.abs(dy) > Math.abs(dx)) this.showScrollbar(this.scenes[2])
     if (touch.zone === 'list' || Math.abs(dy) <= 8 || Math.abs(dy) <= Math.abs(dx) * 1.2) return
     this.prepareSlide(dy < 0 ? 1 : -1)
     this.paintSlide(Math.max(-480, Math.min(480, dy)))
@@ -343,13 +347,16 @@ Page({
       scroll_frame_func: () => {
         if (this.destroyed || this.scenes[2] !== scene || this.slide || this.screenIndex !== 2 || !this.isForeground()) return
         this.cancelHold()
+        const previous = this.listOffset
         this.listOffset = this.readOffset(scene)
         this.updateScrollbar(scene)
+        if (this.listOffset !== previous) this.showScrollbar(scene)
       },
       scroll_complete_func: () => {
         if (this.destroyed || this.scenes[2] !== scene || this.slide || this.screenIndex !== 2 || !this.isForeground()) return
         this.listOffset = this.readOffset(scene)
         this.updateScrollbar(scene)
+        if (scene.scrollVisible) this.showScrollbar(scene)
       }
     }, scene, 'list')
     this.records.forEach((r, index) => {
@@ -371,9 +378,10 @@ Page({
     scene.list.setProperty(ui.prop.POS_Y, -this.listOffset)
     if (this.records.length > 2) {
       const arc = { x: 16, y: 6, w: 448, h: 448, radius: 224, line_width: 3 }
-      this.add(ui.widget.ARC, { ...arc, start_angle: SCROLL_ARC_START, end_angle: SCROLL_ARC_END, color: 0x171d20 })
+      scene.scrollTrack = this.add(ui.widget.ARC, { ...arc, start_angle: SCROLL_ARC_START, end_angle: SCROLL_ARC_END, color: 0x171d20 })
       scene.scrollThumb = this.add(ui.widget.ARC, { ...arc, start_angle: SCROLL_ARC_START, end_angle: SCROLL_ARC_END, color: 0x465056 })
       this.updateScrollbar(scene)
+      this.hideScrollbar(scene)
     }
     if (this.editing) {
       this.button(90, 382, 'Удалить', () => this.removeSelected())
@@ -386,6 +394,28 @@ Page({
     const span = Math.max(5, sweep * 260 / (this.maxOffset() + 260))
     const end = SCROLL_ARC_END - (sweep - span) * this.readOffset(scene) / this.maxOffset()
     scene.scrollThumb.setProperty(ui.prop.MORE, { start_angle: end - span, end_angle: end })
+  },
+  hideScrollbar(scene) {
+    if (!scene) return
+    if (scene.scrollHideTimer != null) clearTimeout(scene.scrollHideTimer)
+    scene.scrollHideTimer = null
+    scene.scrollVisible = false
+    if (scene.scrollTrack) scene.scrollTrack.setProperty(ui.prop.VISIBLE, false)
+    if (scene.scrollThumb) scene.scrollThumb.setProperty(ui.prop.VISIBLE, false)
+  },
+  showScrollbar(scene) {
+    if (!scene?.scrollThumb || this.records.length <= 2 || this.scenes[2] !== scene ||
+      this.screenIndex !== 2 || this.slide || !this.isForeground()) return
+    if (!scene.scrollVisible) {
+      scene.scrollTrack.setProperty(ui.prop.VISIBLE, true)
+      scene.scrollThumb.setProperty(ui.prop.VISIBLE, true)
+      scene.scrollVisible = true
+    }
+    if (scene.scrollHideTimer != null) clearTimeout(scene.scrollHideTimer)
+    scene.scrollHideTimer = setTimeout(() => {
+      scene.scrollHideTimer = null
+      if (this.scenes[2] === scene) this.hideScrollbar(scene)
+    }, 1000)
   },
   bindCard(w, id) {
     w.addEventListener(ui.event.CLICK_DOWN, e => {

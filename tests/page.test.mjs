@@ -59,6 +59,7 @@ for(const count of [0,1,2,4,20]) {
   test('list gestures never leave results, header/footer independent: '+count+' records', () => {
     const h=harness({records:Array.from({length:count},(_,i)=>result(i))}),p=h.page
     h.go(-1)
+    if(count<=2)assert.equal(h.widgets.filter(w=>w.type==='ARC').length,0)
     for(const offset of [0,p.maxOffset()/2,p.maxOffset()]) {
       if(p.list) {p.list.setProperty('POS_Y',-offset);p.list.scroll_frame_func()}
       for(const dy of [-130,130]) {
@@ -110,11 +111,11 @@ test('scroll frames retain list; left arc follows position, decorative arc does 
   h.go(-1);const list=p.list,thumb=p.scrollThumb
   assert.equal(list.scroll_enable,1)
   assert.equal(thumb.type,'ARC');assert.equal(thumb.enabled,false)
-  assert.equal(thumb.end_angle,203)
+  assert.equal(thumb.end_angle,210)
   list.setProperty('POS_Y',-53);list.scroll_frame_func()
-  assert.equal(p.list,list);assert.equal(p.listOffset,53);assert.ok(thumb.end_angle<203)
+  assert.equal(p.list,list);assert.equal(p.listOffset,53);assert.ok(thumb.end_angle<210)
   list.setProperty('POS_Y',-p.maxOffset());list.scroll_frame_func()
-  assert.ok(Math.abs(thumb.start_angle-157)<0.001)
+  assert.ok(Math.abs(thumb.start_angle-150)<0.001)
   const labels=list.children.filter(w=>w.type==='TEXT').slice(0,3)
   assert.equal(labels[0].y,124-(labels[2].y+labels[2].h))
   assert.equal(labels[1].y+labels[1].h/2,62)
@@ -220,4 +221,24 @@ test('repeated cyclic transitions release outgoing widgets and transition timers
     assert.ok(h.widgets.length<105)
   }
   p.onDestroy();assert.equal(h.widgets.length,0);assert.equal(h.activeTimers(),0)
+})
+
+test('scrollbar starts hidden, follows native scrolling/inertia, hides one second after completion', () => {
+  const h=harness({records:[result(1),result(2),result(3),result(4)]}),p=h.page
+  h.go(-1)
+  const scene=p.scenes[2],thumb=p.scrollThumb,list=p.list
+  assert.equal(thumb.visible,false);assert.equal(scene.scrollTrack.visible,false)
+  list.scroll_frame_func();assert.equal(thumb.visible,false) // unchanged initial frame
+  list.setProperty('POS_Y',-30);list.scroll_frame_func()
+  assert.equal(thumb.visible,true);assert.equal(scene.scrollTrack.visible,true)
+  h.elapse(700);list.setProperty('POS_Y',-60);list.scroll_frame_func()
+  h.elapse(700);assert.equal(thumb.visible,true)
+  list.scroll_complete_func();h.elapse(999);assert.equal(thumb.visible,true)
+  h.elapse(1);assert.equal(thumb.visible,false);assert.equal(scene.scrollTrack.visible,false)
+  assert.equal(h.activeTimers(),1) // only measurement, no idle scrollbar polling
+  p.touchDown({x:200,y:200},'list');p.touchMove({x:200,y:150})
+  assert.equal(thumb.visible,true)
+  h.go(-1);assert.equal(h.activeTimers(),1)
+  h.go(1);assert.equal(p.scrollThumb.visible,false)
+  p.onDestroy();assert.equal(h.activeTimers(),0)
 })
