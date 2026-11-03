@@ -13,9 +13,13 @@ export function harness(options = {}) {
   const enumProxy = new Proxy({}, { get: (_, key) => key })
   const ui = { widget: enumProxy, align: enumProxy, prop: enumProxy, event: enumProxy, anim_status: enumProxy,
     createWidget(type, props) {
-      const w = { type, ...props, events: {}, setProperty(k, v) { this[k === 'TEXT' ? 'text' : k] = v }, addEventListener(k, v) { this.events[k] = v } }
+      const w = { type, ...props, children: [], events: {},
+        setProperty(k, v) { this[k.toLowerCase()] = v },
+        getProperty(k) { return this[k.toLowerCase()] || 0 },
+        createWidget(t, p) { const child = ui.createWidget(t,p); child.parent=this; this.children.push(child); return child },
+        addEventListener(k, v) { this.events[k] = v } }
       widgets.push(w); return w
-    }, deleteWidget(w) { const i=widgets.indexOf(w); if(i<0) throw Error('Widget deleted twice'); widgets.splice(i,1) } }
+    }, deleteWidget(w) { for(const c of w.children) ui.deleteWidget(c); const i=widgets.indexOf(w); if(i<0) throw Error('Widget deleted twice'); widgets.splice(i,1) } }
   let gps, screenSensor, lastFix
   class GPS {
     constructor(){gps=this;this.running=false;this.callback=null}

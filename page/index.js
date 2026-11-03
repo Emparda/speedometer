@@ -48,7 +48,7 @@ Page({
       } else this.render()
     }
     this.display.onChange(this.onScreenChange)
-    setScrollLock({ lock: true })
+    setScrollLock({ lock: false })
     this.registerInput()
     this.appCleanup = () => this.dispose()
     getApp()._options.globalData.stopMeasurement = this.appCleanup
@@ -62,8 +62,8 @@ Page({
     interaction.onGesture({ callback: event => {
       if (this.destroyed || !this.screenIsOn()) return false
       this.cancelHold()
-      if (event === interaction.GESTURE_UP) { this.swipe(1); return true }
-      if (event === interaction.GESTURE_DOWN) { this.swipe(-1); return true }
+      if (event === interaction.GESTURE_UP) return this.swipe(1)
+      if (event === interaction.GESTURE_DOWN) return this.swipe(-1)
       if (event === interaction.GESTURE_RIGHT) { this.stopMeasurement(); this.render() }
       return false
     } })
@@ -106,6 +106,7 @@ Page({
     }, 1000)
   },
   stopMeasurement() {
+    this.touch = null
     if (this.running) this.measurement.tick(Date.now())
     this.running = false
     if (this.timer !== undefined && this.timer !== null) clearInterval(this.timer)
@@ -126,7 +127,7 @@ Page({
   },
   navigate(direction) {
     this.cancelHold()
-    const next = Math.max(0, Math.min(2, this.screenIndex + direction))
+    const next = (this.screenIndex + direction + 3) % 3
     if (next === this.screenIndex) return
     this.screenIndex = next
     this.editing = false
@@ -135,15 +136,57 @@ Page({
     this.render()
   },
   swipe(direction) {
-    if (this.screenIndex !== 2) { this.navigate(direction); return }
-    const last = Math.max(0, this.records.length - 2)
-    if (direction < 0 && this.listOffset === 0) { this.navigate(-1); return }
-    const next = Math.max(0, Math.min(last, this.listOffset + direction))
-    if (next !== this.listOffset) { this.listOffset = next; this.render() }
+    if (this.destroyed || !this.screenIsOn()) return true
+    if (Date.now() < (this.suppressGestureUntil || 0)) return true
+    if (this.screenIndex === 2 && this.records.length > 2) {
+      const offset = this.touch ? this.touch.offset : this.readOffset()
+      if (direction < 0 ? offset > 1 : offset < this.maxOffset() - 1) return false
+    }
+    this.touch = null
+    this.navigate(direction)
+    return true
+  },
+  maxOffset() { return Math.max(0, this.records.length * 136 - 12 - 260) },
+  readOffset() {
+    if (!this.list) return 0
+    return Math.max(0, Math.min(this.maxOffset(), -this.list.getProperty(ui.prop.POS_Y)))
+  },
+  touchDown(e) {
+    if (!e || !Number.isFinite(e.y) || this.destroyed || !this.screenIsOn()) return
+    this.suppressGestureUntil = 0
+    this.touch = { x: e.x, y: e.y, offset: this.readOffset(), moved: false }
+  },
+  touchMove(e) {
+    if (!this.touch) return
+    if (!e || Math.abs(e.y - this.touch.y) > 8 || Math.abs(e.x - this.touch.x) > 8) {
+      this.touch.moved = true
+      this.cancelHold()
+    }
+  },
+  touchUp(e) {
+    if (this.destroyed || !this.screenIsOn()) { this.touch = null; return false }
+    const touch = this.touch
+    if (!touch || !e || !Number.isFinite(e.y)) { this.touch = null; return false }
+    const dy = e.y - touch.y, dx = e.x - touch.x
+    const moved = touch.moved || Math.abs(dy) > 8 || Math.abs(dx) > 8
+    if (Math.abs(dy) >= 28 && Math.abs(dy) > Math.abs(dx) * 1.2) {
+      this.swipe(dy < 0 ? 1 : -1)
+      // One finger movement must not trigger both raw and system navigation.
+      this.suppressGestureUntil = Date.now() + 350
+    }
+    this.touch = null
+    return moved
+  },
+  bindTouch(w) {
+    w.addEventListener(ui.event.CLICK_DOWN, e => this.touchDown(e))
+    w.addEventListener(ui.event.MOVE, e => this.touchMove(e))
+    w.addEventListener(ui.event.MOVE_OUT, e => this.touchMove(e))
+    w.addEventListener(ui.event.CLICK_UP, e => this.touchUp(e))
   },
   add(type, options) {
     const w = ui.createWidget(type, options)
     this.widgets.push(w)
+    this.bindTouch(w)
     return w
   },
   text(y, h, size, text, color = CREAM, x = 40, w = 400) {
@@ -152,8 +195,10 @@ Page({
   },
   button(x, y, text, action) {
     return this.add(ui.widget.BUTTON, { x, y, w: 142, h: 52, radius: 26, text,
-      text_size: 22, color: CREAM, normal_color: BUTTON, press_color: 0x303638,
-      click_func: () => { if (!this.destroyed && this.screenIsOn()) action() } })
+      text_size: 22, color: CREAM, normal_color: BUTTON, press_color: BUTTON,
+      click_func: () => {
+        if (!this.destroyed && this.screenIsOn() && !this.touch?.moved && Date.now() >= (this.suppressGestureUntil || 0)) action()
+      } })
   },
   render() {
     if (this.destroyed) return
@@ -161,16 +206,19 @@ Page({
     this.stopLoading()
     this.widgets.forEach(w => ui.deleteWidget(w))
     this.widgets = []
+    this.list = null
+    this.scrollThumb = null
     this.add(ui.widget.FILL_RECT, { x: 0, y: 0, w: 480, h: 480, color: 0 })
     if (this.screenIndex === 0) {
       this.clock = this.text(72, 32, 26, '', MUTED)
       this.value = this.text(131, 180, 170, '')
       this.text(328, 35, 28, 'км/ч', MUTED)
-      this.status = this.text(369, 24, 18, '', MUTED)
-      this.button(169, 399, this.running ? 'Стоп' : 'Запуск', () => {
+      this.status = this.text(275, 24, 18, '', MUTED)
+      this.startStop = this.button(169, 385, this.running ? 'Стоп' : 'Запуск', () => {
         if (this.running) this.stopMeasurement()
         else this.startMeasurement()
-        this.render()
+        this.startStop.setProperty(ui.prop.TEXT, this.running ? 'Стоп' : 'Запуск')
+        this.update()
       })
     } else if (this.screenIndex === 1) {
       this.text(66, 26, 19, 'МАКСИМУМ · КМ/Ч', MUTED)
@@ -179,33 +227,69 @@ Page({
       this.distance = this.text(202, 57, 44, '')
       this.text(279, 26, 19, 'ВРЕМЯ', MUTED)
       this.elapsed = this.text(307, 45, 34, '')
-      this.button(169, 372, 'Сохранить', () => this.saveSnapshot())
+      this.button(169, 385, 'Сохранить', () => this.saveSnapshot())
     } else this.renderResults()
+    for (let i = 0; i < 3; i++) this.add(ui.widget.CIRCLE, {
+      center_x: 454, center_y: 222 + i * 18, radius: 3,
+      color: i === this.screenIndex ? CREAM : 0x353c40
+    })
     this.update()
   },
   renderResults() {
     this.text(43, 30, 22, this.editing ? 'ВЫБРАТЬ' : 'РЕЗУЛЬТАТЫ', MUTED)
     if (this.storageError) { this.text(185, 80, 22, 'Ошибка чтения\nсохранённых данных'); return }
     if (!this.records.length) { this.text(185, 70, 23, 'Нет сохранённых\nрезультатов', MUTED); return }
-    this.listOffset = Math.min(this.listOffset, Math.max(0, this.records.length - 2))
-    this.records.slice(this.listOffset, this.listOffset + 2).forEach((r, index) => {
-      const y = 100 + index * 136
-      const chosen = this.selected.indexOf(r.id) >= 0
-      const before = this.widgets.length
-      this.add(ui.widget.FILL_RECT, { x: 66, y, w: 348, h: 124, radius: 18, color: chosen ? 0x303638 : BUTTON })
-      this.text(y + 10, 26, 20, dateLabel(r.savedAt), CREAM, 76, 328)
-      this.text(y + 40, 30, 22, 'Макс. ' + Math.round(r.max) + ' км/ч  ·  ' + (r.distance / 1000).toFixed(2) + ' км', CREAM, 76, 328)
-      this.text(y + 78, 26, 22, duration(r.elapsed), MUTED, 76, 328)
-      this.widgets.slice(before).forEach(w => this.bindCard(w, r.id))
+    this.listOffset = Math.min(this.listOffset, this.maxOffset())
+    this.list = this.add(ui.widget.VIEW_CONTAINER, {
+      x: 66, y: 100, w: 348, h: 260, scroll_enable: 1, bounce: 0,
+      scroll_frame_func: () => {
+        if (this.destroyed || this.screenIndex !== 2 || !this.screenIsOn()) return
+        this.cancelHold()
+        this.listOffset = this.readOffset()
+        this.updateScrollbar()
+      },
+      scroll_complete_func: () => {
+        if (this.destroyed || this.screenIndex !== 2) return
+        this.listOffset = this.readOffset()
+        this.updateScrollbar()
+      }
     })
+    this.records.forEach((r, index) => {
+      const y = index * 136
+      const chosen = this.selected.indexOf(r.id) >= 0
+      const card = (type, props) => {
+        const w = this.list.createWidget(type, props)
+        this.bindCard(w, r.id)
+      }
+      card(ui.widget.FILL_RECT, { x: 0, y, w: 348, h: 124, radius: 18, color: chosen ? 0x303638 : BUTTON })
+      const label = (offset, h, size, text, color) => card(ui.widget.TEXT, {
+        x: 10, y: y + offset, w: 328, h, text_size: size, text, color,
+        align_h: ui.align.CENTER_H, align_v: ui.align.CENTER_V
+      })
+      label(10, 26, 20, dateLabel(r.savedAt), CREAM)
+      label(40, 30, 22, 'Макс. ' + Math.round(r.max) + ' км/ч  ·  ' + (r.distance / 1000).toFixed(2) + ' км', CREAM)
+      label(78, 26, 22, duration(r.elapsed), MUTED)
+    })
+    this.list.setProperty(ui.prop.POS_Y, -this.listOffset)
+    if (this.records.length > 2) {
+      this.add(ui.widget.FILL_RECT, { x: 426, y: 140, w: 3, h: 180, radius: 1, color: 0x252c30 })
+      this.scrollThumb = this.add(ui.widget.FILL_RECT, { x: 426, y: 140, w: 3,
+        h: Math.max(18, Math.round(180 * 260 / (this.maxOffset() + 260))), radius: 1, color: MUTED })
+      this.updateScrollbar()
+    }
     if (this.editing) {
       this.button(90, 382, 'Удалить', () => this.removeSelected())
       this.button(248, 382, 'Готово', () => { this.editing = false; this.selected = []; this.render() })
-    } else this.text(390, 27, 18,
-      (this.listOffset + 1) + '–' + Math.min(this.listOffset + 2, this.records.length) + ' / ' + this.records.length, MUTED)
+    } else this.text(390, 27, 18, 'Сохранено: ' + this.records.length + ' / 20', MUTED)
+  },
+  updateScrollbar() {
+    if (!this.scrollThumb) return
+    const h = Math.max(18, Math.round(180 * 260 / (this.maxOffset() + 260)))
+    this.scrollThumb.setProperty(ui.prop.Y, 140 + Math.round((180 - h) * this.readOffset() / this.maxOffset()))
   },
   bindCard(w, id) {
-    w.addEventListener(ui.event.CLICK_DOWN, () => {
+    w.addEventListener(ui.event.CLICK_DOWN, e => {
+      this.touchDown(e)
       this.cancelHold()
       this.pressedId = id
       this.holdTriggered = false
@@ -218,12 +302,13 @@ Page({
         this.render()
       }, 650)
     })
-    w.addEventListener(ui.event.MOVE, () => this.cancelHold())
-    w.addEventListener(ui.event.MOVE_OUT, () => this.cancelHold())
-    w.addEventListener(ui.event.CLICK_UP, () => {
+    w.addEventListener(ui.event.MOVE, e => { this.touchMove(e); this.cancelHold() })
+    w.addEventListener(ui.event.MOVE_OUT, e => { this.touchMove(e); this.cancelHold() })
+    w.addEventListener(ui.event.CLICK_UP, e => {
       const tap = this.pressedId === id && !this.holdTriggered
+      const moved = this.touchUp(e)
       this.cancelHold()
-      if (tap && this.editing) {
+      if (tap && !moved && this.editing) {
         this.selected = this.selected.indexOf(id) >= 0 ? this.selected.filter(x => x !== id) : this.selected.concat([id])
         this.render()
       }

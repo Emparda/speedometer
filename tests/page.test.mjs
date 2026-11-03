@@ -39,20 +39,70 @@ test('manual save is an immutable snapshot without stopping; no duplicates while
   reopened.page.onDestroy()
 })
 
-test('gesture list scrolls, keys change screen immediately, boundaries do not wrap', () => {
-  const h = harness({ records: Array.from({length: 6}, (_, i) => result(i)) }), p = h.page
-  h.swipe('GESTURE_DOWN'); assert.equal(p.screenIndex, 0)
-  h.swipe('GESTURE_UP'); assert.equal(p.screenIndex, 1)
-  h.swipe('GESTURE_UP'); assert.equal(p.screenIndex, 2)
-  h.swipe('GESTURE_UP'); assert.equal(p.listOffset, 1)
-  h.key('KEY_UP'); assert.equal(p.screenIndex, 1)
-  h.key('KEY_DOWN'); assert.equal(p.screenIndex, 2); assert.equal(p.listOffset, 0)
-  h.swipe('GESTURE_UP'); h.swipe('GESTURE_DOWN'); assert.equal(p.listOffset, 0); assert.equal(p.screenIndex, 2)
-  h.swipe('GESTURE_DOWN'); assert.equal(p.screenIndex, 1)
-  h.key('KEY_DOWN'); for (let i=0;i<10;i++) h.swipe('GESTURE_UP')
-  assert.equal(p.listOffset, 4); assert.equal(p.screenIndex, 2)
-  h.key('KEY_DOWN'); assert.equal(p.screenIndex, 2)
-  assert.equal(p.running, true); p.onDestroy()
+test('screens wrap in both directions with gestures and hardware buttons, including empty results', () => {
+  const h=harness(),p=h.page
+  h.swipe('GESTURE_DOWN'); assert.equal(p.screenIndex,2)
+  h.swipe('GESTURE_UP'); assert.equal(p.screenIndex,0)
+  h.key('KEY_UP'); assert.equal(p.screenIndex,2)
+  h.key('KEY_DOWN'); assert.equal(p.screenIndex,0)
+  h.swipe('GESTURE_UP'); h.swipe('GESTURE_UP'); assert.equal(p.screenIndex,2)
+  h.swipe('GESTURE_DOWN'); assert.equal(p.screenIndex,1)
+  p.onDestroy()
+})
+
+test('native list scrolls continuously; only gestures starting at an edge change screen', () => {
+  const h=harness({records:Array.from({length:4},(_,i)=>result(i))}),p=h.page
+  p.navigate(-1)
+  const list=p.list
+  assert.equal(list.scroll_enable,1); assert.equal(h.cards().length,4)
+  assert.equal(h.swipe('GESTURE_UP'),false); assert.equal(p.screenIndex,2)
+  // Simulate a native frame during finger movement, not a whole-card jump.
+  list.setProperty('POS_Y',-53); list.scroll_frame_func()
+  assert.equal(p.listOffset,53); assert.equal(p.list,list)
+  assert.ok(p.scrollThumb.y>140)
+  p.touchDown({x:200,y:250})
+  list.setProperty('POS_Y',-p.maxOffset()); list.scroll_frame_func()
+  p.touchUp({x:200,y:180}); assert.equal(p.screenIndex,2)
+  h.advance(1500)
+  p.touchDown({x:200,y:250});p.touchUp({x:200,y:210})
+  assert.equal(p.screenIndex,0)
+  h.swipe('GESTURE_UP'); assert.equal(p.screenIndex,0) // duplicate system event
+  h.key('KEY_UP'); assert.equal(p.screenIndex,2)
+  h.key('KEY_UP'); assert.equal(p.screenIndex,1)
+  p.onDestroy()
+})
+
+test('short swipes over text navigate once, horizontal movement does not navigate', () => {
+  const h=harness(),p=h.page
+  p.value.events.CLICK_DOWN({x:240,y:240})
+  p.value.events.MOVE({x:240,y:218})
+  p.value.events.CLICK_UP({x:240,y:205})
+  assert.equal(p.screenIndex,1)
+  h.swipe('GESTURE_UP');assert.equal(p.screenIndex,1)
+  p.maximum.events.CLICK_DOWN({x:180,y:120})
+  p.maximum.events.CLICK_UP({x:230,y:130})
+  assert.equal(p.screenIndex,1)
+  p.onDestroy()
+})
+
+test('buttons retain their widget/background; equal coordinates; three indicators on all screens', () => {
+  const h=harness(),p=h.page
+  const button=p.startStop, initialWidgets=h.widgets.length
+  assert.equal(button.normal_color,button.press_color)
+  h.click('Стоп');assert.equal(p.startStop,button);assert.equal(button.text,'Запуск')
+  h.click('Запуск');assert.equal(p.startStop,button);assert.equal(h.widgets.length,initialWidgets)
+  assert.ok(p.status.y>=181+80);assert.ok(p.status.y+p.status.h<328)
+  for(let i=0;i<3;i++) {
+    p.screenIndex=i;p.render()
+    const dots=h.widgets.filter(w=>w.type==='CIRCLE')
+    assert.equal(dots.length,3);assert.equal(dots.filter(w=>w.color===0xeee6da).length,1)
+    assert.equal(dots[i].color,0xeee6da)
+    if(i===1) {
+      const save=h.widgets.find(w=>w.text==='Сохранить')
+      assert.equal(save.y,button.y);assert.equal(save.x,button.x)
+    }
+  }
+  p.onDestroy()
 })
 
 test('long press selects, swipe does not delete; choose multiple cards and delete', () => {
