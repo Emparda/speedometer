@@ -1,6 +1,6 @@
 # Спидометр 1.2.5 — Amazfit T-Rex 3
 
-<img width="1254" height="1254" alt="Изображение ChatGPT 3 нояб  2026 г , 19_22_04" src="https://github.com/user-attachments/assets/bb32723d-b1b5-42a3-95da-79fc4191a407" />
+<img width="400" height="400" alt="Изображение ChatGPT 3 нояб  2026 г , 19_22_04~1" src="https://github.com/user-attachments/assets/dfc989fd-dda1-4534-9b92-04e013566e35" />
 
 
 Версия 1.2.5 / code 11. appId 1029117 и ключ сохранённых результатов не изменены. Чёрный фон, бежевые цифры, км/ч; существующие иконка, размеры кнопок и анимация поиска GPS сохранены.
