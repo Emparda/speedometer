@@ -10,10 +10,12 @@ import { RESULTS_KEY, MAX_RESULTS, readResults, saveResult, deleteResults, dateL
 const CREAM = 0xeee6da
 const MUTED = 0x69757b
 const BUTTON = 0x15191b
+const SCROLL_ARC_START = 157
+const SCROLL_ARC_END = 203
 
 Page({
   build() {
-    this.widgets = []
+    this.scenes = {}
     this.screenIndex = 0
     this.listOffset = 0
     this.selected = []
@@ -30,7 +32,7 @@ Page({
     this.display = new Screen()
     this.onFix = () => {
       if (!this.running || this.destroyed) return
-      if (!this.screenIsOn()) { this.stopMeasurement(); this.render(); return }
+      if (!this.isForeground()) { this.stopMeasurement(); this.render(); return }
       try {
         if (this.gps.getStatus() === 'A') {
           this.measurement.sample(this.gps.getLatitude({ format: 'DD' }), this.gps.getLongitude({ format: 'DD' }), Date.now())
@@ -40,8 +42,8 @@ Page({
       this.update()
     }
     this.onScreenChange = () => {
-      if (this.destroyed) return
-      if (!this.screenIsOn()) {
+      if (this.destroyed || this.exiting) return
+      if (!this.isForeground()) {
         this.stopMeasurement()
         this.cancelHold()
         this.stopLoading()
@@ -55,35 +57,37 @@ Page({
     this.startMeasurement()
     this.render()
   },
-  screenIsOn() {
+  isForeground() {
+    if (this.exiting || this.destroyed) return false
     try { return this.display.getStatus() === 1 } catch (_) { return false }
   },
   registerInput() {
     interaction.onGesture({ callback: event => {
-      if (this.destroyed || !this.screenIsOn()) return false
+      if (this.destroyed || !this.isForeground()) return false
       this.cancelHold()
       if (event === interaction.GESTURE_UP) return this.swipe(1)
       if (event === interaction.GESTURE_DOWN) return this.swipe(-1)
-      if (event === interaction.GESTURE_RIGHT) { this.stopMeasurement(); this.render() }
+      if (event === interaction.GESTURE_RIGHT) { this.exiting = true; this.stopMeasurement(); this.cancelHold() }
       return false
     } })
     interaction.onKey({ callback: (key, event) => {
       if (this.destroyed) return false
       if (key === interaction.KEY_UP || key === interaction.KEY_DOWN) {
-        if (event === interaction.KEY_EVENT_CLICK && this.screenIsOn()) this.navigate(key === interaction.KEY_DOWN ? 1 : -1)
+        if (event === interaction.KEY_EVENT_CLICK && this.isForeground()) this.navigate(key === interaction.KEY_DOWN ? 1 : -1)
         return true
       }
       if (key === interaction.KEY_BACK || key === interaction.KEY_HOME) {
+        this.exiting = true
         this.stopMeasurement()
         this.cancelHold()
         this.stopLoading()
-        if (this.screenIsOn()) this.render()
+        if (this.isForeground()) this.render()
       }
       return false
     } })
   },
   startMeasurement() {
-    if (this.destroyed || !this.screenIsOn()) return
+    if (this.destroyed || !this.isForeground()) return
     this.stopMeasurement()
     this.measurement = new Measurement()
     this.measurement.tick(Date.now())
@@ -100,13 +104,14 @@ Page({
     } catch (_) { this.gpsError = true }
     this.timer = setInterval(() => {
       if (!this.running || this.destroyed) return
-      if (!this.screenIsOn()) { this.stopMeasurement(); return }
+      if (!this.isForeground()) { this.stopMeasurement(); return }
       this.measurement.tick(Date.now())
       this.update()
     }, 1000)
   },
   stopMeasurement() {
     this.touch = null
+    this.cancelTransition()
     if (this.running) this.measurement.tick(Date.now())
     this.running = false
     if (this.timer !== undefined && this.timer !== null) clearInterval(this.timer)
@@ -124,69 +129,155 @@ Page({
     this.stopLoading()
     resetDropWristScreenOff()
     resetPageBrightTime()
+    if (!this.isForeground()) {
+      Object.keys(this.scenes).forEach(index => this.destroyScene(index))
+      this.adoptScene()
+    }
   },
   navigate(direction) {
+    if (this.destroyed || !this.isForeground()) return
+    this.touch = null
     this.cancelHold()
+    if (this.slideTimer) return
+    this.prepareSlide(direction)
+    this.finishSlide(true)
+  },
+  prepareSlide(direction) {
+    if (this.slide && this.slide.direction === direction) return
+    this.cancelTransition()
+    setScrollLock({ lock: true })
     const next = (this.screenIndex + direction + 3) % 3
-    if (next === this.screenIndex) return
-    this.screenIndex = next
-    this.editing = false
-    this.selected = []
-    if (next === 2) this.listOffset = 0
-    this.render()
+    this.createScene(next, direction * 480)
+    this.slide = { from: this.screenIndex, next, direction, offset: 0 }
+  },
+  paintSlide(offset) {
+    if (!this.slide) return
+    this.slide.offset = offset
+    this.moveScene(this.scenes[this.slide.from], offset)
+    this.moveScene(this.scenes[this.slide.next], offset + this.slide.direction * 480)
+  },
+  finishSlide(commit) {
+    const slide = this.slide
+    if (!slide || this.slideTimer) return
+    this.touch = null
+    this.suppressGestureUntil = Date.now() + 350
+    const start = Date.now(), from = slide.offset, target = commit ? -slide.direction * 480 : 0
+    this.slideTimer = setInterval(() => {
+      if (this.destroyed || !this.isForeground()) { this.cancelTransition(); return }
+      const t = Math.min(1, (Date.now() - start) / 180)
+      this.paintSlide(Math.round(from + (target - from) * (1 - Math.pow(1 - t, 3))))
+      if (t < 1) return
+      clearInterval(this.slideTimer)
+      this.slideTimer = null
+      this.slide = null
+      if (commit) {
+        this.screenIndex = slide.next
+        this.destroyScene(slide.from)
+        if (slide.from === 2) { this.editing = false; this.selected = [] }
+      } else this.destroyScene(slide.next)
+      this.moveScene(this.scenes[this.screenIndex], 0)
+      this.adoptScene()
+      setScrollLock({ lock: false })
+      this.update()
+    }, 20)
+  },
+  cancelTransition() {
+    if (this.slideTimer != null) clearInterval(this.slideTimer)
+    this.slideTimer = null
+    if (this.slide) {
+      const slide = this.slide
+      this.slide = null
+      this.destroyScene(slide.next)
+      this.moveScene(this.scenes[slide.from], 0)
+    }
+    setScrollLock({ lock: false })
+  },
+  moveScene(scene, offset) {
+    if (!scene) return
+    scene.offset = offset
+    scene.widgets.forEach(entry => entry.w.setProperty(entry.prop, entry.y + offset))
+  },
+  destroyScene(index) {
+    const scene = this.scenes[index]
+    if (!scene) return
+    this.stopLoading(scene)
+    scene.widgets.forEach(entry => ui.deleteWidget(entry.w))
+    delete this.scenes[index]
+  },
+  adoptScene() {
+    const scene = this.scenes[this.screenIndex]
+    // Public references also keep the lifecycle/UI harness straightforward.
+    for (const key of ['clock','value','status','startStop','maximum','distance','elapsed','list','scrollThumb','loading']) {
+      this[key] = scene?.[key] || null
+    }
   },
   swipe(direction) {
-    if (this.destroyed || !this.screenIsOn()) return true
-    if (Date.now() < (this.suppressGestureUntil || 0)) return true
-    if (this.screenIndex === 2 && this.records.length > 2) {
-      const offset = this.touch ? this.touch.offset : this.readOffset()
-      if (direction < 0 ? offset > 1 : offset < this.maxOffset() - 1) return false
+    if (this.destroyed || !this.isForeground()) return true
+    if (this.touch?.zone === 'list') return false
+    if (Date.now() < (this.suppressGestureUntil || 0)) return this.lastTouchZone !== 'list'
+    if (this.touch?.zone === 'page') {
+      this.prepareSlide(direction)
+      this.finishSlide(true)
+      return true
     }
-    this.touch = null
+    // A direction-only event has no origin. Never let it escape the list.
+    if (this.screenIndex === 2) return false
     this.navigate(direction)
     return true
   },
   maxOffset() { return Math.max(0, this.records.length * 136 - 12 - 260) },
-  readOffset() {
-    if (!this.list) return 0
-    return Math.max(0, Math.min(this.maxOffset(), -this.list.getProperty(ui.prop.POS_Y)))
+  readOffset(scene = this.scenes[2]) {
+    if (!scene?.list) return this.listOffset
+    return Math.max(0, Math.min(this.maxOffset(), -scene.list.getProperty(ui.prop.POS_Y)))
   },
-  touchDown(e) {
-    if (!e || !Number.isFinite(e.y) || this.destroyed || !this.screenIsOn()) return
+  touchDown(e, zone = 'page') {
+    if (!e || !Number.isFinite(e.y) || this.destroyed || !this.isForeground() || this.slideTimer) return
     this.suppressGestureUntil = 0
-    this.touch = { x: e.x, y: e.y, offset: this.readOffset(), moved: false }
+    if (this.screenIndex === 2 && e.y >= 100 && e.y < 360) zone = 'list'
+    this.lastTouchZone = zone
+    this.touch = { x: e.x, y: e.y, zone, moved: false }
   },
   touchMove(e) {
-    if (!this.touch) return
-    if (!e || Math.abs(e.y - this.touch.y) > 8 || Math.abs(e.x - this.touch.x) > 8) {
-      this.touch.moved = true
+    const touch = this.touch
+    if (!touch || !e || this.destroyed || !this.isForeground()) return
+    const dy = e.y - touch.y, dx = e.x - touch.x
+    if (Math.abs(dy) > 8 || Math.abs(dx) > 8) {
+      touch.moved = true
       this.cancelHold()
     }
+    if (touch.zone === 'list' || Math.abs(dy) <= 8 || Math.abs(dy) <= Math.abs(dx) * 1.2) return
+    this.prepareSlide(dy < 0 ? 1 : -1)
+    this.paintSlide(Math.max(-480, Math.min(480, dy)))
   },
   touchUp(e) {
-    if (this.destroyed || !this.screenIsOn()) { this.touch = null; return false }
+    if (this.destroyed || !this.isForeground()) { this.touch = null; return false }
     const touch = this.touch
-    if (!touch || !e || !Number.isFinite(e.y)) { this.touch = null; return false }
-    const dy = e.y - touch.y, dx = e.x - touch.x
-    const moved = touch.moved || Math.abs(dy) > 8 || Math.abs(dx) > 8
-    if (Math.abs(dy) >= 28 && Math.abs(dy) > Math.abs(dx) * 1.2) {
-      this.swipe(dy < 0 ? 1 : -1)
-      // One finger movement must not trigger both raw and system navigation.
-      this.suppressGestureUntil = Date.now() + 350
-    }
+    if (!touch) return false
+    if (e && Number.isFinite(e.y)) this.touchMove(e)
+    const dy = e && Number.isFinite(e.y) ? e.y - touch.y : 0
+    const dx = e && Number.isFinite(e.x) ? e.x - touch.x : 0
+    const moved = touch.moved
     this.touch = null
+    this.lastTouchZone = touch.zone
+    if (moved) this.suppressGestureUntil = Date.now() + 350
+    if (touch.zone === 'page' && this.slide) this.finishSlide(Math.abs(dy) >= 28 && Math.abs(dy) > Math.abs(dx) * 1.2)
     return moved
   },
-  bindTouch(w) {
-    w.addEventListener(ui.event.CLICK_DOWN, e => this.touchDown(e))
+  bindTouch(w, zone = 'page') {
+    w.addEventListener(ui.event.CLICK_DOWN, e => this.touchDown(e, zone))
     w.addEventListener(ui.event.MOVE, e => this.touchMove(e))
     w.addEventListener(ui.event.MOVE_OUT, e => this.touchMove(e))
     w.addEventListener(ui.event.CLICK_UP, e => this.touchUp(e))
   },
-  add(type, options) {
-    const w = ui.createWidget(type, options)
-    this.widgets.push(w)
-    this.bindTouch(w)
+  add(type, options, scene = this.buildingScene || this.scenes[this.screenIndex], zone = 'page') {
+    const isCircle = type === ui.widget.CIRCLE
+    const field = isCircle ? 'center_y' : 'y'
+    const y = options[field] || 0
+    const w = ui.createWidget(type, { ...options, [field]: y + scene.offset })
+    scene.widgets.push({ w, y, prop: isCircle ? ui.prop.CENTER_Y : ui.prop.Y })
+    // Decorative arcs have full-screen bounding boxes: let touches pass through.
+    if (type === ui.widget.ARC) w.setEnable(false)
+    else this.bindTouch(w, zone)
     return w
   },
   text(y, h, size, text, color = CREAM, x = 40, w = 400) {
@@ -197,68 +288,75 @@ Page({
     return this.add(ui.widget.BUTTON, { x, y, w: 142, h: 52, radius: 26, text,
       text_size: 22, color: CREAM, normal_color: BUTTON, press_color: BUTTON,
       click_func: () => {
-        if (!this.destroyed && this.screenIsOn() && !this.touch?.moved && Date.now() >= (this.suppressGestureUntil || 0)) action()
+        if (!this.destroyed && !this.slide && this.isForeground() && !this.touch?.moved && Date.now() >= (this.suppressGestureUntil || 0)) action()
       } })
   },
   render() {
-    if (this.destroyed) return
+    if (this.destroyed || !this.isForeground()) return
+    this.touch = null
     this.cancelHold()
-    this.stopLoading()
-    this.widgets.forEach(w => ui.deleteWidget(w))
-    this.widgets = []
-    this.list = null
-    this.scrollThumb = null
+    this.cancelTransition()
+    Object.keys(this.scenes).forEach(index => this.destroyScene(index))
+    this.createScene(this.screenIndex, 0)
+    this.adoptScene()
+  },
+  createScene(index, offset) {
+    const scene = { index, offset, widgets: [] }
+    this.scenes[index] = scene
+    this.buildingScene = scene
     this.add(ui.widget.FILL_RECT, { x: 0, y: 0, w: 480, h: 480, color: 0 })
-    if (this.screenIndex === 0) {
-      this.clock = this.text(72, 32, 26, '', MUTED)
-      this.value = this.text(131, 180, 170, '')
+    if (scene.index === 0) {
+      scene.clock = this.text(72, 32, 26, '', MUTED)
+      scene.value = this.text(131, 180, 170, '')
       this.text(328, 35, 28, 'км/ч', MUTED)
-      this.status = this.text(275, 24, 18, '', MUTED)
-      this.startStop = this.button(169, 385, this.running ? 'Стоп' : 'Запуск', () => {
+      scene.status = this.text(275, 24, 18, '', MUTED)
+      scene.startStop = this.button(169, 385, this.running ? 'Стоп' : 'Запуск', () => {
         if (this.running) this.stopMeasurement()
         else this.startMeasurement()
-        this.startStop.setProperty(ui.prop.TEXT, this.running ? 'Стоп' : 'Запуск')
+        scene.startStop.setProperty(ui.prop.TEXT, this.running ? 'Стоп' : 'Запуск')
         this.update()
       })
-    } else if (this.screenIndex === 1) {
+    } else if (scene.index === 1) {
       this.text(66, 26, 19, 'МАКСИМУМ · КМ/Ч', MUTED)
-      this.maximum = this.text(94, 60, 48, '')
+      scene.maximum = this.text(94, 60, 48, '')
       this.text(174, 26, 19, 'РАССТОЯНИЕ · КМ', MUTED)
-      this.distance = this.text(202, 57, 44, '')
+      scene.distance = this.text(202, 57, 44, '')
       this.text(279, 26, 19, 'ВРЕМЯ', MUTED)
-      this.elapsed = this.text(307, 45, 34, '')
+      scene.elapsed = this.text(307, 45, 34, '')
       this.button(169, 385, 'Сохранить', () => this.saveSnapshot())
-    } else this.renderResults()
+    } else this.renderResults(scene)
     for (let i = 0; i < 3; i++) this.add(ui.widget.CIRCLE, {
       center_x: 454, center_y: 222 + i * 18, radius: 3,
-      color: i === this.screenIndex ? CREAM : 0x353c40
+      color: i === scene.index ? CREAM : 0x353c40
     })
-    this.update()
+    this.buildingScene = null
+    this.updateScene(scene)
+    return scene
   },
-  renderResults() {
+  renderResults(scene) {
     this.text(43, 30, 22, this.editing ? 'ВЫБРАТЬ' : 'РЕЗУЛЬТАТЫ', MUTED)
     if (this.storageError) { this.text(185, 80, 22, 'Ошибка чтения\nсохранённых данных'); return }
     if (!this.records.length) { this.text(185, 70, 23, 'Нет сохранённых\nрезультатов', MUTED); return }
     this.listOffset = Math.min(this.listOffset, this.maxOffset())
-    this.list = this.add(ui.widget.VIEW_CONTAINER, {
+    scene.list = this.add(ui.widget.VIEW_CONTAINER, {
       x: 66, y: 100, w: 348, h: 260, scroll_enable: 1, bounce: 0,
       scroll_frame_func: () => {
-        if (this.destroyed || this.screenIndex !== 2 || !this.screenIsOn()) return
+        if (this.destroyed || this.scenes[2] !== scene || this.slide || this.screenIndex !== 2 || !this.isForeground()) return
         this.cancelHold()
-        this.listOffset = this.readOffset()
-        this.updateScrollbar()
+        this.listOffset = this.readOffset(scene)
+        this.updateScrollbar(scene)
       },
       scroll_complete_func: () => {
-        if (this.destroyed || this.screenIndex !== 2) return
-        this.listOffset = this.readOffset()
-        this.updateScrollbar()
+        if (this.destroyed || this.scenes[2] !== scene || this.slide || this.screenIndex !== 2 || !this.isForeground()) return
+        this.listOffset = this.readOffset(scene)
+        this.updateScrollbar(scene)
       }
-    })
+    }, scene, 'list')
     this.records.forEach((r, index) => {
       const y = index * 136
       const chosen = this.selected.indexOf(r.id) >= 0
       const card = (type, props) => {
-        const w = this.list.createWidget(type, props)
+        const w = scene.list.createWidget(type, props)
         this.bindCard(w, r.id)
       }
       card(ui.widget.FILL_RECT, { x: 0, y, w: 348, h: 124, radius: 18, color: chosen ? 0x303638 : BUTTON })
@@ -266,36 +364,39 @@ Page({
         x: 10, y: y + offset, w: 328, h, text_size: size, text, color,
         align_h: ui.align.CENTER_H, align_v: ui.align.CENTER_V
       })
-      label(10, 26, 20, dateLabel(r.savedAt), CREAM)
-      label(40, 30, 22, 'Макс. ' + Math.round(r.max) + ' км/ч  ·  ' + (r.distance / 1000).toFixed(2) + ' км', CREAM)
-      label(78, 26, 22, duration(r.elapsed), MUTED)
+      label(15, 26, 20, dateLabel(r.savedAt), CREAM)
+      label(47, 30, 22, 'Макс. ' + Math.round(r.max) + ' км/ч  ·  ' + (r.distance / 1000).toFixed(2) + ' км', CREAM)
+      label(83, 26, 22, duration(r.elapsed), MUTED)
     })
-    this.list.setProperty(ui.prop.POS_Y, -this.listOffset)
+    scene.list.setProperty(ui.prop.POS_Y, -this.listOffset)
     if (this.records.length > 2) {
-      this.add(ui.widget.FILL_RECT, { x: 426, y: 140, w: 3, h: 180, radius: 1, color: 0x252c30 })
-      this.scrollThumb = this.add(ui.widget.FILL_RECT, { x: 426, y: 140, w: 3,
-        h: Math.max(18, Math.round(180 * 260 / (this.maxOffset() + 260))), radius: 1, color: MUTED })
-      this.updateScrollbar()
+      const arc = { x: 16, y: 6, w: 448, h: 448, radius: 224, line_width: 3 }
+      this.add(ui.widget.ARC, { ...arc, start_angle: SCROLL_ARC_START, end_angle: SCROLL_ARC_END, color: 0x171d20 })
+      scene.scrollThumb = this.add(ui.widget.ARC, { ...arc, start_angle: SCROLL_ARC_START, end_angle: SCROLL_ARC_END, color: 0x465056 })
+      this.updateScrollbar(scene)
     }
     if (this.editing) {
       this.button(90, 382, 'Удалить', () => this.removeSelected())
       this.button(248, 382, 'Готово', () => { this.editing = false; this.selected = []; this.render() })
     } else this.text(390, 27, 18, 'Сохранено: ' + this.records.length + ' / 20', MUTED)
   },
-  updateScrollbar() {
-    if (!this.scrollThumb) return
-    const h = Math.max(18, Math.round(180 * 260 / (this.maxOffset() + 260)))
-    this.scrollThumb.setProperty(ui.prop.Y, 140 + Math.round((180 - h) * this.readOffset() / this.maxOffset()))
+  updateScrollbar(scene) {
+    if (!scene.scrollThumb) return
+    const sweep = SCROLL_ARC_END - SCROLL_ARC_START
+    const span = Math.max(5, sweep * 260 / (this.maxOffset() + 260))
+    const end = SCROLL_ARC_END - (sweep - span) * this.readOffset(scene) / this.maxOffset()
+    scene.scrollThumb.setProperty(ui.prop.MORE, { start_angle: end - span, end_angle: end })
   },
   bindCard(w, id) {
     w.addEventListener(ui.event.CLICK_DOWN, e => {
-      this.touchDown(e)
+      if (this.slide || this.destroyed || !this.isForeground()) return
+      this.touchDown(e, 'list')
       this.cancelHold()
       this.pressedId = id
       this.holdTriggered = false
       this.holdTimer = setTimeout(() => {
         this.holdTimer = null
-        if (this.destroyed || this.pressedId !== id || !this.screenIsOn()) return
+        if (this.destroyed || this.pressedId !== id || !this.isForeground()) return
         this.holdTriggered = true
         this.editing = true
         if (this.selected.indexOf(id) < 0) this.selected.push(id)
@@ -320,7 +421,7 @@ Page({
     this.pressedId = null
   },
   saveSnapshot() {
-    if (this.destroyed || !this.screenIsOn()) return
+    if (this.destroyed || !this.isForeground()) return
     if (this.storageError) { this.toast('Ошибка чтения данных'); return }
     if (this.running) this.measurement.tick(Date.now())
     const snapshot = this.measurement.snapshot()
@@ -349,39 +450,50 @@ Page({
   toast(content) { interaction.showToast({ content }) },
   update() {
     if (this.destroyed) return
-    if (this.screenIndex === 0) {
+    Object.keys(this.scenes).forEach(index => this.updateScene(this.scenes[index]))
+    this.adoptScene()
+  },
+  updateScene(scene) {
+    if (this.destroyed) return
+    if (scene.index === 0) {
       const d = new Date(), minutes = d.getMinutes()
-      this.clock.setProperty(ui.prop.TEXT, d.getHours() + ':' + (minutes < 10 ? '0' : '') + minutes)
+      scene.clock.setProperty(ui.prop.TEXT, d.getHours() + ':' + (minutes < 10 ? '0' : '') + minutes)
       const loading = this.running && this.measurement.speed === null
-      this.value.setProperty(ui.prop.TEXT, loading ? '' : String(Math.round(this.measurement.speed || 0)))
-      if (loading && this.screenIsOn()) this.startLoading()
-      else this.stopLoading()
-      this.status.setProperty(ui.prop.TEXT, !this.running ? '' : this.gpsError ? 'GPS недоступен' :
+      scene.value.setProperty(ui.prop.TEXT, loading ? '' : String(Math.round(this.measurement.speed || 0)))
+      if (loading && this.isForeground()) this.startLoading(scene)
+      else this.stopLoading(scene)
+      scene.status.setProperty(ui.prop.TEXT, !this.running ? '' : this.gpsError ? 'GPS недоступен' :
         !this.measurement.ready ? 'Поиск GPS…' : loading ? 'Измерение…' : '')
-    } else if (this.screenIndex === 1) {
-      this.maximum.setProperty(ui.prop.TEXT, String(Math.round(this.measurement.max)))
-      this.distance.setProperty(ui.prop.TEXT, (this.measurement.distance / 1000).toFixed(2))
-      this.elapsed.setProperty(ui.prop.TEXT, duration(this.measurement.elapsed))
+    } else if (scene.index === 1) {
+      scene.maximum.setProperty(ui.prop.TEXT, String(Math.round(this.measurement.max)))
+      scene.distance.setProperty(ui.prop.TEXT, (this.measurement.distance / 1000).toFixed(2))
+      scene.elapsed.setProperty(ui.prop.TEXT, duration(this.measurement.elapsed))
     }
   },
-  startLoading() {
-    if (this.loading) return
-    this.loading = this.add(ui.widget.IMG_ANIM, { x: 176, y: 181,
+  startLoading(scene) {
+    if (scene.loading) return
+    scene.loading = this.add(ui.widget.IMG_ANIM, { x: 176, y: 181,
       anim_path: 'gps-loading', anim_prefix: 'loading', anim_ext: 'png',
-      anim_fps: 40, anim_size: 48, repeat_count: 0, anim_status: ui.anim_status.START })
+      anim_fps: 40, anim_size: 48, repeat_count: 0, anim_status: ui.anim_status.START }, scene)
   },
-  stopLoading() {
-    if (!this.loading) return
-    this.loading.setProperty(ui.prop.ANIM_STATUS, ui.anim_status.STOP)
-    ui.deleteWidget(this.loading)
-    this.widgets = this.widgets.filter(w => w !== this.loading)
-    this.loading = null
+  stopLoading(scene) {
+    if (!scene) {
+      Object.keys(this.scenes).forEach(index => this.stopLoading(this.scenes[index]))
+      this.loading = null
+      return
+    }
+    if (!scene.loading) return
+    scene.loading.setProperty(ui.prop.ANIM_STATUS, ui.anim_status.STOP)
+    ui.deleteWidget(scene.loading)
+    scene.widgets = scene.widgets.filter(entry => entry.w !== scene.loading)
+    scene.loading = null
   },
   dispose() {
     if (this.destroyed) return
     this.destroyed = true
     this.stopMeasurement()
     this.cancelHold()
+    Object.keys(this.scenes).forEach(index => this.destroyScene(index))
     try { this.display.offChange(this.onScreenChange) } catch (_) {}
     interaction.offGesture()
     interaction.offKey()

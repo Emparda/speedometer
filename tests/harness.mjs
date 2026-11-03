@@ -10,22 +10,28 @@ export function harness(options = {}) {
   let page, app, now = 1000, nextTimer = 0
   const data = options.data || new Map(options.records ? [[RESULTS_KEY, JSON.stringify(options.records)]] : [])
   const writes = [], widgets = [], timers = new Map(), input = { key: null, gesture: null }, toasts = []
+  const activity = { timerCallbacks: 0, uiWrites: 0, gpsReads: 0, gpsStarts: 0, gpsStops: 0 }
   const enumProxy = new Proxy({}, { get: (_, key) => key })
   const ui = { widget: enumProxy, align: enumProxy, prop: enumProxy, event: enumProxy, anim_status: enumProxy,
     createWidget(type, props) {
       const w = { type, ...props, children: [], events: {},
-        setProperty(k, v) { this[k.toLowerCase()] = v },
+        setProperty(k, v) {
+          if(this.deleted)throw Error('Write to deleted widget')
+          activity.uiWrites++
+          if(k==='MORE')Object.assign(this,v);else this[k.toLowerCase()] = v
+        },
+        setEnable(value) { this.enabled=value },
         getProperty(k) { return this[k.toLowerCase()] || 0 },
         createWidget(t, p) { const child = ui.createWidget(t,p); child.parent=this; this.children.push(child); return child },
         addEventListener(k, v) { this.events[k] = v } }
       widgets.push(w); return w
-    }, deleteWidget(w) { for(const c of w.children) ui.deleteWidget(c); const i=widgets.indexOf(w); if(i<0) throw Error('Widget deleted twice'); widgets.splice(i,1) } }
+    }, deleteWidget(w) { for(const c of w.children) ui.deleteWidget(c); const i=widgets.indexOf(w); if(i<0) throw Error('Widget deleted twice'); widgets.splice(i,1); w.deleted=true } }
   let gps, screenSensor, lastFix
   class GPS {
     constructor(){gps=this;this.running=false;this.callback=null}
-    onChange(cb){this.callback=cb;lastFix=cb} start(){this.running=true}
-    offChange(){this.callback=null} stop(){this.running=false}
-    getStatus(){return 'A'} getLatitude(){return 0}
+    onChange(cb){this.callback=cb;lastFix=cb} start(){this.running=true;activity.gpsStarts++}
+    offChange(){this.callback=null} stop(){this.running=false;activity.gpsStops++}
+    getStatus(){activity.gpsReads++;return 'A'} getLatitude(){return 0}
     getLongitude(){return (now-1000)/1000*10/6371000*180/Math.PI}
   }
   class Display { constructor(){screenSensor=this;this.status=1} getStatus(){return this.status} onChange(cb){this.callback=cb} offChange(){this.callback=null} }
@@ -47,13 +53,15 @@ export function harness(options = {}) {
   vm.runInNewContext(readFileSync(new URL('../app.js',import.meta.url),'utf8'),context)
   const src=readFileSync(new URL('../page/index.js',import.meta.url),'utf8').replace(/^import [^\n]*\n/gm,'')
   vm.runInNewContext(src,context);page.build()
-  return {page,app,data,writes,widgets,gps,screenSensor,input,toasts,
+  const advance=t=>{now=t;for(const [id,timer] of [...timers])if(timers.has(id)&&timer.at<=now){if(timer.repeat)timer.at=now+timer.ms;else timers.delete(id);activity.timerCallbacks++;timer.cb()}}
+  return {page,app,data,writes,widgets,gps,screenSensor,input,toasts,activity,
     activeTimers:()=>timers.size,
     fix(){gps.callback?.()},lateFix(){lastFix?.()},
     click(label){const w=widgets.find(w=>w.type==='BUTTON'&&w.text===label);if(!w)throw Error('Missing button '+label);w.click_func()},
     key(key){return input.key?.(key,'KEY_EVENT_CLICK')},swipe(event){return input.gesture?.(event)},
     screen(status){screenSensor.status=status;screenSensor.callback?.(status)},
     cards(){return widgets.filter(w=>w.type==='FILL_RECT'&&w.w===348)},
-    advance(t){now=t;for(const [id,timer] of [...timers])if(timers.has(id)&&timer.at<=now){if(timer.repeat)timer.at=now+timer.ms;else timers.delete(id);timer.cb()}}
+    advance, elapse(ms){advance(now+ms)}, settle(){advance(now+400)},
+    go(direction){page.navigate(direction);advance(now+400)}
   }
 }

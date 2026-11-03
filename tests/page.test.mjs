@@ -23,7 +23,7 @@ test('auto-start, stop freezes all metrics, restart resets; never auto-saves', (
 
 test('manual save is an immutable snapshot without stopping; no duplicates while stopped', () => {
   const h = harness(), p = h.page
-  h.fix(); h.advance(4000); h.fix(); h.swipe('GESTURE_UP')
+  h.fix(); h.advance(4000); h.fix(); h.swipe('GESTURE_UP'); h.settle()
   h.click('Сохранить')
   assert.equal(p.running, true); assert.equal(p.records.length, 1)
   const saved = JSON.stringify(p.records[0])
@@ -39,49 +39,85 @@ test('manual save is an immutable snapshot without stopping; no duplicates while
   reopened.page.onDestroy()
 })
 
-test('screens wrap in both directions with gestures and hardware buttons, including empty results', () => {
+function drag(h, y, dy, x=240) {
+  h.page.touchDown({x,y})
+  h.page.touchMove({x,y:y+dy})
+  h.page.touchUp({x,y:y+dy})
+}
+
+test('cyclic navigation: first/last and hardware buttons; empty results uses header/footer', () => {
   const h=harness(),p=h.page
-  h.swipe('GESTURE_DOWN'); assert.equal(p.screenIndex,2)
-  h.swipe('GESTURE_UP'); assert.equal(p.screenIndex,0)
-  h.key('KEY_UP'); assert.equal(p.screenIndex,2)
-  h.key('KEY_DOWN'); assert.equal(p.screenIndex,0)
-  h.swipe('GESTURE_UP'); h.swipe('GESTURE_UP'); assert.equal(p.screenIndex,2)
-  h.swipe('GESTURE_DOWN'); assert.equal(p.screenIndex,1)
+  drag(h,240,80);h.settle();assert.equal(p.screenIndex,2)
+  drag(h,420,-80);h.settle();assert.equal(p.screenIndex,0)
+  h.key('KEY_UP');h.settle();assert.equal(p.screenIndex,2)
+  h.key('KEY_DOWN');h.settle();assert.equal(p.screenIndex,0)
+  h.go(1);h.go(1);drag(h,60,60);h.settle();assert.equal(p.screenIndex,1)
   p.onDestroy()
 })
 
-test('native list scrolls continuously; only gestures starting at an edge change screen', () => {
-  const h=harness({records:Array.from({length:4},(_,i)=>result(i))}),p=h.page
-  p.navigate(-1)
-  const list=p.list
-  assert.equal(list.scroll_enable,1); assert.equal(h.cards().length,4)
-  assert.equal(h.swipe('GESTURE_UP'),false); assert.equal(p.screenIndex,2)
-  // Simulate a native frame during finger movement, not a whole-card jump.
-  list.setProperty('POS_Y',-53); list.scroll_frame_func()
-  assert.equal(p.listOffset,53); assert.equal(p.list,list)
-  assert.ok(p.scrollThumb.y>140)
-  p.touchDown({x:200,y:250})
-  list.setProperty('POS_Y',-p.maxOffset()); list.scroll_frame_func()
-  p.touchUp({x:200,y:180}); assert.equal(p.screenIndex,2)
-  h.advance(1500)
-  p.touchDown({x:200,y:250});p.touchUp({x:200,y:210})
-  assert.equal(p.screenIndex,0)
-  h.swipe('GESTURE_UP'); assert.equal(p.screenIndex,0) // duplicate system event
-  h.key('KEY_UP'); assert.equal(p.screenIndex,2)
-  h.key('KEY_UP'); assert.equal(p.screenIndex,1)
-  p.onDestroy()
-})
+for(const count of [0,1,2,4,20]) {
+  test('list gestures never leave results, header/footer independent: '+count+' records', () => {
+    const h=harness({records:Array.from({length:count},(_,i)=>result(i))}),p=h.page
+    h.go(-1)
+    for(const offset of [0,p.maxOffset()/2,p.maxOffset()]) {
+      if(p.list) {p.list.setProperty('POS_Y',-offset);p.list.scroll_frame_func()}
+      for(const dy of [-130,130]) {
+        drag(h,220,dy)
+        assert.equal(h.swipe(dy<0?'GESTURE_UP':'GESTURE_DOWN'),false)
+        h.settle();assert.equal(p.screenIndex,2);assert.ok(!p.slide)
+      }
+    }
+    const offset=p.listOffset
+    drag(h,420,-90);h.settle();assert.equal(p.screenIndex,0)
+    h.go(-1);assert.equal(p.listOffset,offset)
+    drag(h,55,80);h.settle();assert.equal(p.screenIndex,1)
+    p.onDestroy()
+  })
+}
 
-test('short swipes over text navigate once, horizontal movement does not navigate', () => {
+test('two screens move together under the finger; release eases to the next; duplicate gesture ignored', () => {
   const h=harness(),p=h.page
   p.value.events.CLICK_DOWN({x:240,y:240})
-  p.value.events.MOVE({x:240,y:218})
-  p.value.events.CLICK_UP({x:240,y:205})
-  assert.equal(p.screenIndex,1)
-  h.swipe('GESTURE_UP');assert.equal(p.screenIndex,1)
-  p.maximum.events.CLICK_DOWN({x:180,y:120})
-  p.maximum.events.CLICK_UP({x:230,y:130})
-  assert.equal(p.screenIndex,1)
+  p.value.events.MOVE({x:240,y:120})
+  assert.equal(p.screenIndex,0)
+  assert.equal(p.scenes[0].offset,-120);assert.equal(p.scenes[1].offset,360)
+  assert.equal(p.scenes[0].value.y,11);assert.equal(p.scenes[1].maximum.y,454)
+  assert.equal(h.activeTimers(),1) // no animation polling while finger is down
+  p.touchUp({x:240,y:120})
+  h.elapse(60)
+  assert.ok(p.scenes[0].offset < -120 && p.scenes[0].offset > -480)
+  assert.equal(p.scenes[1].offset-p.scenes[0].offset,480)
+  h.swipe('GESTURE_UP');h.settle();assert.equal(p.screenIndex,1)
+  assert.deepEqual(Object.keys(p.scenes),['1']);assert.equal(h.activeTimers(),1)
+  p.onDestroy()
+})
+
+test('short drag snaps back, horizontal drag stays; reversing direction shows correct cyclic neighbour', () => {
+  const h=harness(),p=h.page
+  drag(h,240,-15);h.settle();assert.equal(p.screenIndex,0)
+  assert.equal(p.scenes[0].offset,0);assert.deepEqual(Object.keys(p.scenes),['0'])
+  p.touchDown({x:200,y:240});p.touchMove({x:280,y:250});p.touchUp({x:280,y:250})
+  assert.equal(p.screenIndex,0)
+  p.touchDown({x:240,y:240});p.touchMove({x:240,y:180})
+  assert.equal(p.slide.next,1)
+  p.touchMove({x:240,y:300});assert.equal(p.slide.next,2);assert.ok(!p.scenes[1])
+  p.touchUp({x:240,y:300});h.settle();assert.equal(p.screenIndex,2)
+  p.onDestroy()
+})
+
+test('scroll frames retain list; left arc follows position, decorative arc does not intercept input', () => {
+  const h=harness({records:Array.from({length:4},(_,i)=>result(i))}),p=h.page
+  h.go(-1);const list=p.list,thumb=p.scrollThumb
+  assert.equal(list.scroll_enable,1)
+  assert.equal(thumb.type,'ARC');assert.equal(thumb.enabled,false)
+  assert.equal(thumb.end_angle,203)
+  list.setProperty('POS_Y',-53);list.scroll_frame_func()
+  assert.equal(p.list,list);assert.equal(p.listOffset,53);assert.ok(thumb.end_angle<203)
+  list.setProperty('POS_Y',-p.maxOffset());list.scroll_frame_func()
+  assert.ok(Math.abs(thumb.start_angle-157)<0.001)
+  const labels=list.children.filter(w=>w.type==='TEXT').slice(0,3)
+  assert.equal(labels[0].y,124-(labels[2].y+labels[2].h))
+  assert.equal(labels[1].y+labels[1].h/2,62)
   p.onDestroy()
 })
 
@@ -107,7 +143,7 @@ test('buttons retain their widget/background; equal coordinates; three indicator
 
 test('long press selects, swipe does not delete; choose multiple cards and delete', () => {
   const h = harness({ records: [result(1), result(2), result(3)] }), p = h.page
-  p.navigate(1); p.navigate(1)
+  h.go(1); h.go(1)
   let card = h.cards()[0]
   card.events.CLICK_DOWN(); card.events.MOVE(); h.advance(1700)
   assert.equal(p.editing, false)
@@ -123,10 +159,10 @@ test('long press selects, swipe does not delete; choose multiple cards and delet
 
 test('20-record cap does not evict; save after explicit deletion', () => {
   const h = harness({ records: Array.from({length:20},(_,i)=>result(i)) }), p=h.page
-  p.navigate(1); h.click('Сохранить')
+  h.go(1); h.click('Сохранить')
   assert.equal(p.records.length,20); assert.equal(h.writes.length,0); assert.equal(p.screenIndex,2)
   p.selected=['r19']; p.removeSelected(); assert.equal(p.records.length,19)
-  p.navigate(-1); h.click('Сохранить'); assert.equal(p.records.length,20)
+  h.go(-1); h.click('Сохранить'); assert.equal(p.records.length,20)
   p.onDestroy()
 })
 
@@ -161,7 +197,7 @@ for (const exit of ['screenOff','KEY_BACK','KEY_HOME','GESTURE_RIGHT','pageDestr
 }
 
 test('long press timer is cancelled when display switches off', () => {
-  const h=harness({ records:[result(1)] });h.page.navigate(1);h.page.navigate(1)
+  const h=harness({ records:[result(1)] });h.go(1);h.go(1)
   h.cards()[0].events.CLICK_DOWN(); h.screen(2)
   assert.equal(h.activeTimers(),0);h.advance(10000);assert.equal(h.page.editing,false)
   h.page.onDestroy()
@@ -172,4 +208,16 @@ test('configuration has no phone module, background service or ZML dependency', 
   assert.deepEqual(Object.keys(manifest.targets['t-rex-3'].module),['page'])
   const pkg=JSON.parse(readFileSync(new URL('../package.json',import.meta.url)))
   assert.equal(pkg.dependencies?.['@zeppos/zml'],undefined)
+})
+
+test('repeated cyclic transitions release outgoing widgets and transition timers', () => {
+  const h=harness({records:Array.from({length:20},(_,i)=>result(i))}),p=h.page
+  for(let i=0;i<30;i++) {
+    h.go(i%2?1:-1)
+    assert.equal(Object.keys(p.scenes).length,1)
+    assert.equal(p.slideTimer,null)
+    assert.equal(h.activeTimers(),1)
+    assert.ok(h.widgets.length<105)
+  }
+  p.onDestroy();assert.equal(h.widgets.length,0);assert.equal(h.activeTimers(),0)
 })
