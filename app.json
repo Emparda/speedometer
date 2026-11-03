@@ -5,8 +5,8 @@
     "appName": "Спидометр",
     "appType": "app",
     "version": {
-      "name": "1.2.7",
-      "code": 13
+      "name": "1.2.8",
+      "code": 14
     },
     "icon": "icon.png",
     "vender": "Independent",

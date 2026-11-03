@@ -265,3 +265,14 @@ test('indicator stays in the same overlay during drag, reversal, settle and canc
  drag(h,50,-15);h.settle();check();h.go(1);check();assert.equal(dots[0].color,0xeee6da)
  p.onDestroy()
 })
+
+test('exit freezes final frame, stops GPS once and repeated exits do not repeat cleanup', () => {
+ const h=harness(),p=h.page
+ p.touchDown({x:240,y:240});p.touchMove({x:240,y:120});p.touchUp({x:240,y:120})
+ const count=h.widgets.length,offset=p.scenes[0].offset
+ h.key('KEY_HOME');assert.equal(h.widgets.length,count);assert.equal(p.scenes[0].offset,offset)
+ assert.equal(h.activeTimers(),0);assert.equal(h.activity.gpsStops,1)
+ const writes=h.activity.uiWrites
+ h.key('KEY_HOME');h.key('KEY_BACK');assert.equal(h.activity.uiWrites,writes);assert.equal(h.activity.gpsStops,1)
+ p.onDestroy();h.app.onDestroy();assert.equal(h.activity.gpsStops,1);assert.equal(h.widgets.length,0)
+})

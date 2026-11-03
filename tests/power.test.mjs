@@ -22,7 +22,7 @@ for (const exit of ['screenOff','KEY_BACK','KEY_HOME','GESTURE_RIGHT','pageDestr
       else if(exit==='GESTURE_RIGHT')h.swipe(exit)
       else h.key(exit)
       assert.equal(h.activeTimers(),0);assert.equal(h.gps.running,false)
-      assert.equal(h.gps.callback,null);assert.equal(h.widgets.length,0)
+      assert.equal(h.gps.callback,null);if(!['KEY_BACK','KEY_HOME','GESTURE_RIGHT'].includes(exit))assert.equal(h.widgets.length,0)
       const activity=JSON.stringify(h.activity), snapshot=JSON.stringify(p.measurement.snapshot())
       for(let i=0;i<360;i++)h.elapse(10000)
       h.lateFix();lateClick()

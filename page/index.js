@@ -67,7 +67,7 @@ Page({
       this.cancelHold()
       if (event === interaction.GESTURE_UP) return this.swipe(1)
       if (event === interaction.GESTURE_DOWN) return this.swipe(-1)
-      if (event === interaction.GESTURE_RIGHT) { this.exiting = true; this.stopMeasurement(); this.cancelHold() }
+      if (event === interaction.GESTURE_RIGHT) this.beginExit()
       return false
     } })
     interaction.onKey({ callback: (key, event) => {
@@ -77,11 +77,7 @@ Page({
         return true
       }
       if (key === interaction.KEY_BACK || key === interaction.KEY_HOME) {
-        this.exiting = true
-        this.stopMeasurement()
-        this.cancelHold()
-        this.stopLoading()
-        if (this.isForeground()) this.render()
+        this.beginExit()
       }
       return false
     } })
@@ -536,16 +532,46 @@ Page({
       return
     }
     if (!scene.loading) return
-    scene.loading.setProperty(ui.prop.ANIM_STATUS, ui.anim_status.STOP)
+    if (!scene.loadingStopped) scene.loading.setProperty(ui.prop.ANIM_STATUS, ui.anim_status.STOP)
     ui.deleteWidget(scene.loading)
     scene.widgets = scene.widgets.filter(entry => entry.w !== scene.loading)
     scene.loading = null
   },
+  beginExit() {
+    if (this.exiting) return
+    this.exiting = true
+    // Stop work before touching the UI. Keep the final frame until OS closes the page.
+    this.running = false
+    this.touch = null
+    if (this.timer != null) clearInterval(this.timer)
+    this.timer = null
+    if (this.slideTimer != null) clearInterval(this.slideTimer)
+    this.slideTimer = null
+    this.slide = null
+    this.cancelHold()
+    if (this.gpsSubscribed) {
+      try { this.gps.offChange(this.onFix) } catch (_) {}
+      try { this.gps.stop() } catch (_) {}
+      this.gpsSubscribed = false
+    }
+    Object.keys(this.scenes).forEach(index => {
+      const scene = this.scenes[index]
+      if (scene.scrollHideTimer != null) clearTimeout(scene.scrollHideTimer)
+      scene.scrollHideTimer = null
+      if (scene.loading) {
+        scene.loading.setProperty(ui.prop.ANIM_STATUS, ui.anim_status.STOP)
+        scene.loadingStopped = true
+      }
+    })
+    this.loading = null
+    resetDropWristScreenOff()
+    resetPageBrightTime()
+  },
   dispose() {
     if (this.destroyed) return
+    this.beginExit()
     this.destroyed = true
     this.destroyIndicator()
-    this.stopMeasurement()
     this.cancelHold()
     Object.keys(this.scenes).forEach(index => this.destroyScene(index))
     try { this.display.offChange(this.onScreenChange) } catch (_) {}
