@@ -50,7 +50,7 @@ Page({
       } else this.render()
     }
     this.display.onChange(this.onScreenChange)
-    setScrollLock({ lock: false })
+    setScrollLock({ lock: this.screenIndex !== 2 || this.records.length === 0 })
     this.registerInput()
     this.appCleanup = () => this.dispose()
     getApp()._options.globalData.stopMeasurement = this.appCleanup
@@ -179,7 +179,7 @@ Page({
       } else this.destroyScene(slide.next)
       this.moveScene(this.scenes[this.screenIndex], 0)
       this.adoptScene()
-      setScrollLock({ lock: false })
+      setScrollLock({ lock: this.screenIndex !== 2 || this.records.length === 0 })
       this.update()
     }, 20)
   },
@@ -192,7 +192,7 @@ Page({
       this.destroyScene(slide.next)
       this.moveScene(this.scenes[slide.from], 0)
     }
-    setScrollLock({ lock: false })
+    setScrollLock({ lock: this.screenIndex !== 2 || this.records.length === 0 })
   },
   moveScene(scene, offset) {
     if (!scene) return
@@ -216,15 +216,17 @@ Page({
   },
   swipe(direction) {
     if (this.destroyed || !this.isForeground()) return true
-    if (this.touch?.zone === 'list') return false
-    if (Date.now() < (this.suppressGestureUntil || 0)) return this.lastTouchZone !== 'list'
+    if (this.slideTimer) return true
+    if (this.touch?.zone === 'list') return true
+    if (Date.now() < (this.suppressGestureUntil || 0)) return true
+    if (this.slide) { this.finishSlide(Math.abs(this.slide.offset) >= 28); return true }
     if (this.touch?.zone === 'page') {
       this.prepareSlide(direction)
       this.finishSlide(true)
       return true
     }
     // A direction-only event has no origin. Never let it escape the list.
-    if (this.screenIndex === 2) return false
+    if (this.screenIndex === 2 && this.records.length > 0) return true
     this.navigate(direction)
     return true
   },
@@ -235,8 +237,9 @@ Page({
   },
   touchDown(e, zone = 'page') {
     if (!e || !Number.isFinite(e.y) || this.destroyed || !this.isForeground() || this.slideTimer) return
+    if (this.touch) return
     this.suppressGestureUntil = 0
-    if (this.screenIndex === 2 && e.y >= 100 && e.y < 360) zone = 'list'
+    if (this.screenIndex === 2 && this.records.length > 0 && e.y >= 100 && e.y < 360) zone = 'list'
     this.lastTouchZone = zone
     this.touch = { x: e.x, y: e.y, zone, moved: false }
   },

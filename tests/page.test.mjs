@@ -55,7 +55,7 @@ test('cyclic navigation: first/last and hardware buttons; empty results uses hea
   p.onDestroy()
 })
 
-for(const count of [0,1,2,4,20]) {
+for(const count of [1,2,4,20]) {
   test('list gestures never leave results, header/footer independent: '+count+' records', () => {
     const h=harness({records:Array.from({length:count},(_,i)=>result(i))}),p=h.page
     h.go(-1)
@@ -64,7 +64,7 @@ for(const count of [0,1,2,4,20]) {
       if(p.list) {p.list.setProperty('POS_Y',-offset);p.list.scroll_frame_func()}
       for(const dy of [-130,130]) {
         drag(h,220,dy)
-        assert.equal(h.swipe(dy<0?'GESTURE_UP':'GESTURE_DOWN'),false)
+        assert.equal(h.swipe(dy<0?'GESTURE_UP':'GESTURE_DOWN'),true)
         h.settle();assert.equal(p.screenIndex,2);assert.ok(!p.slide)
       }
     }
@@ -241,4 +241,17 @@ test('scrollbar starts hidden, follows native scrolling/inertia, hides one secon
   h.go(-1);assert.equal(h.activeTimers(),1)
   h.go(1);assert.equal(p.scrollThumb.visible,false)
   p.onDestroy();assert.equal(h.activeTimers(),0)
+})
+
+
+test('empty results accepts central swipes; duplicate/opposite system events cannot replace a settling scene', () => {
+ const h=harness(),p=h.page;h.go(-1)
+ p.touchDown({x:240,y:240});p.touchMove({x:240,y:160})
+ const next=p.scenes[0]
+ h.swipe('GESTURE_DOWN')
+ assert.equal(p.slide.next,0);assert.equal(p.scenes[0],next)
+ h.swipe('GESTURE_UP');p.touchUp({x:240,y:160});h.settle()
+ assert.equal(p.screenIndex,0);assert.equal(p.scenes[0],next)
+ h.go(-1);drag(h,240,80);h.settle();assert.equal(p.screenIndex,1)
+ p.onDestroy()
 })
