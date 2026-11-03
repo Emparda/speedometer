@@ -20,8 +20,8 @@ GPS и таймеры останавливаются при «Стоп», вык
 
 Скачайте и распакуйте архив приложения.  
 Откройте папку и запустите «Обновить.cmd» — нужен установленный Node.js 22.  
-Дождитесь QR-кода.
+Дождитесь QR-код.  
 В Zepp откройте режим разработчика → Mini Program → сканер и отсканируйте код.  
 После установки откройте «Спидометр» на часах.
 
-<img width="307" height="307" alt="QR" src="https://github.com/user-attachments/assets/ccb26404-bc68-40ea-a0a3-27b85b7f9f97" />
+<img width="308" height="309" alt="QR" src="https://github.com/user-attachments/assets/40d9a13d-1135-4e3e-a41d-f32f4ad09752" />
