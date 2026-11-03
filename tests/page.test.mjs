@@ -255,3 +255,13 @@ test('empty results accepts central swipes; duplicate/opposite system events can
  h.go(-1);drag(h,240,80);h.settle();assert.equal(p.screenIndex,1)
  p.onDestroy()
 })
+
+test('indicator stays in the same overlay during drag, reversal, settle and cancellation', () => {
+ const h=harness(),p=h.page,overlay=p.indicator,dots=[...p.indicatorDots]
+ const check=()=>{assert.equal(p.indicator,overlay);assert.equal(overlay.x,446);assert.equal(overlay.y,210);dots.forEach((w,i)=>{assert.equal(p.indicatorDots[i],w);assert.equal(w.center_y,12+i*18)})}
+ p.touchDown({x:240,y:240});p.touchMove({x:240,y:150});check()
+ p.touchMove({x:240,y:300});check();p.touchUp({x:240,y:300});h.elapse(80);check();h.settle();check()
+ assert.equal(dots[2].color,0xeee6da)
+ drag(h,50,-15);h.settle();check();h.go(1);check();assert.equal(dots[0].color,0xeee6da)
+ p.onDestroy()
+})

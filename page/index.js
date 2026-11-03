@@ -131,6 +131,7 @@ Page({
     resetDropWristScreenOff()
     resetPageBrightTime()
     if (!this.isForeground()) {
+      this.destroyIndicator()
       Object.keys(this.scenes).forEach(index => this.destroyScene(index))
       this.adoptScene()
     }
@@ -208,6 +209,7 @@ Page({
     delete this.scenes[index]
   },
   adoptScene() {
+    if (this.indicatorDots) this.indicatorDots.forEach((w, i) => w.setProperty(ui.prop.COLOR, i === this.screenIndex ? CREAM : 0x353c40))
     const scene = this.scenes[this.screenIndex]
     // Public references also keep the lifecycle/UI harness straightforward.
     for (const key of ['clock','value','status','startStop','maximum','distance','elapsed','list','scrollThumb','loading']) {
@@ -332,13 +334,31 @@ Page({
       scene.elapsed = this.text(307, 45, 34, '')
       this.button(169, 385, 'Сохранить', () => this.saveSnapshot())
     } else this.renderResults(scene)
-    for (let i = 0; i < 3; i++) this.add(ui.widget.CIRCLE, {
-      center_x: 454, center_y: 222 + i * 18, radius: 3,
-      color: i === scene.index ? CREAM : 0x353c40
-    })
     this.buildingScene = null
     this.updateScene(scene)
+    this.ensureIndicator()
     return scene
+  },
+  ensureIndicator() {
+    if (this.indicator || !this.isForeground()) return
+    this.indicator = ui.createWidget(ui.widget.VIEW_CONTAINER, {
+      x: 446, y: 210, w: 16, h: 60, z_index: 10, modal: 0, scroll_enable: 0
+    })
+    this.indicator.setEnable(false)
+    this.indicatorDots = []
+    for (let i = 0; i < 3; i++) {
+      const w = this.indicator.createWidget(ui.widget.CIRCLE, {
+        center_x: 8, center_y: 12 + i * 18, radius: 3,
+        color: i === this.screenIndex ? CREAM : 0x353c40
+      })
+      w.setEnable(false)
+      this.indicatorDots.push(w)
+    }
+  },
+  destroyIndicator() {
+    if (this.indicator) ui.deleteWidget(this.indicator)
+    this.indicator = null
+    this.indicatorDots = null
   },
   renderResults(scene) {
     this.text(43, 30, 22, this.editing ? 'ВЫБРАТЬ' : 'РЕЗУЛЬТАТЫ', MUTED)
@@ -524,6 +544,7 @@ Page({
   dispose() {
     if (this.destroyed) return
     this.destroyed = true
+    this.destroyIndicator()
     this.stopMeasurement()
     this.cancelHold()
     Object.keys(this.scenes).forEach(index => this.destroyScene(index))
