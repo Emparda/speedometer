@@ -1,7 +1,6 @@
-# Спидометр 1.2.5 — Amazfit T-Rex 3
+# Спидометр 1.2.7 — Amazfit T-Rex 3
 
-<img width="400" height="400" alt="Изображение ChatGPT 3 нояб  2026 г , 19_22_04~1" src="https://github.com/user-attachments/assets/dfc989fd-dda1-4534-9b92-04e013566e35" />
-<img width="400" height="400" alt="Изображение ChatGPT 3 нояб  2026 г , 19_20_52~1" src="https://github.com/user-attachments/assets/dcb7ebd9-c258-4761-afb9-88a63719eeab" />
+<img width="400" height="400" alt="Speedometer-1 2 6-preview-transparent" src="https://github.com/user-attachments/assets/73c2a39c-ff32-4a7b-a89b-da3716aa4753" />
 
 ## Фон и батарея
 
