@@ -55,7 +55,7 @@ test('cyclic navigation: first/last and hardware buttons; empty results uses hea
   p.onDestroy()
 })
 
-for(const count of [2,4,20]) {
+for(const count of [3,4,20]) {
   test('list gestures never leave results, header/footer independent: '+count+' records', () => {
     const h=harness({records:Array.from({length:count},(_,i)=>result(i))}),p=h.page
     h.go(-1)
@@ -337,7 +337,7 @@ test('seeded mixed-event simulation: saving, deleting, gestures, GPS and screen 
     for(let step=0;step<250;step++) {
       switch(random(10)) {
         case 0:h.go(random(2)?1:-1);break
-        case 1:drag(h,p.screenIndex===2&&p.records.length>=2?420:220,random(2)?80:-80);h.settle();break
+        case 1:drag(h,p.screenIndex===2&&p.records.length>=3?420:220,random(2)?80:-80);h.settle();break
         case 2:p.saveSnapshot();break
         case 3:if(p.records.length){p.selected=[p.records[random(p.records.length)].id];p.removeSelected()}break
         case 4:if(p.list){h.nativeDrag(random(301)-150,true);p.list.scroll_complete_func()}break
@@ -361,33 +361,36 @@ test('seeded mixed-event simulation: saving, deleting, gestures, GPS and screen 
   }
 })
 
-for (const dy of [-100,100]) test('single card and container route central swipe to pages: '+dy,()=>{
+for (const count of [1,2]) for (const dy of [-100,100]) test('few cards and container route central swipe to pages: '+count+' / '+dy,()=>{
   for(const target of ['card','list']) {
-    const h=harness({records:[result(1)]}),p=h.page;h.go(-1)
+    const h=harness({records:Array.from({length:count},(_,i)=>result(i))}),p=h.page;h.go(-1)
     const w=target==='card'?h.cards()[0]:p.list
     assert.equal(p.list.scroll_enable,0)
     w.events.CLICK_DOWN({x:240,y:200});assert.equal(p.touch.zone,'page')
     w.events.MOVE({x:240,y:200+dy});w.events.CLICK_UP({x:240,y:200+dy})
     h.swipe(dy<0?'GESTURE_UP':'GESTURE_DOWN');h.settle()
-    assert.equal(p.screenIndex,dy<0?0:1);assert.equal(p.records.length,1)
+    assert.equal(p.screenIndex,dy<0?0:1);assert.equal(p.records.length,count)
     assert.ok(!p.editing);assert.equal(p.scenes[p.screenIndex].offset,0)
     p.onDestroy();assert.equal(h.activeTimers(),0)
   }
 })
 
-test('one card supports system swipe and long press; deleting two down to one restores page swipes',()=>{
+test('long press preserved; saving three and deleting back to two changes gesture mode',()=>{
   const h=harness({records:[result(1)]}),p=h.page;h.go(-1)
   h.swipe('GESTURE_UP');h.settle();assert.equal(p.screenIndex,0)
   h.go(-1);const card=h.cards()[0]
   card.events.CLICK_DOWN({x:240,y:160});h.elapse(650)
   assert.equal(p.editing,true);assert.deepEqual(Array.from(p.selected),['r1'])
   h.click('Готово');h.go(-1);h.click('Сохранить');h.go(1)
-  assert.equal(p.records.length,2);assert.equal(p.list.scroll_enable,1)
+  assert.equal(p.records.length,2);assert.equal(p.list.scroll_enable,0)
+  drag(h,200,80);h.settle();assert.equal(p.screenIndex,1)
+  h.elapse(1000);h.click('Сохранить');h.go(1)
+  assert.equal(p.records.length,3);assert.equal(p.list.scroll_enable,1)
   drag(h,200,-80);h.settle();assert.equal(p.screenIndex,2)
   p.selected=['r1'];p.removeSelected()
-  assert.equal(p.records.length,1);assert.equal(p.list.scroll_enable,0)
+  assert.equal(p.records.length,2);assert.equal(p.list.scroll_enable,0)
   drag(h,200,-80);h.settle();assert.equal(p.screenIndex,0)
-  h.go(-1);p.selected=[p.records[0].id];p.removeSelected()
+  h.go(-1);p.selected=p.records.map(r=>r.id);p.removeSelected()
   assert.equal(p.records.length,0);drag(h,200,80);h.settle();assert.equal(p.screenIndex,1)
   p.onDestroy()
 })

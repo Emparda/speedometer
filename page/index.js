@@ -229,7 +229,7 @@ Page({
       return true
     }
     // A direction-only event has no origin. Never let it escape the list.
-    if (this.screenIndex === 2 && this.records.length >= 2) return true
+    if (this.screenIndex === 2 && this.records.length >= 3) return true
     this.navigate(direction)
     return true
   },
@@ -245,7 +245,7 @@ Page({
     if (this.touch && this.touch.at === Date.now() && this.touch.x === e.x && this.touch.y === e.y) return
     if (this.touch || this.slide) { this.cancelHold(); this.cancelTransition() }
     this.suppressGestureUntil = 0
-    if (this.screenIndex === 2) zone = this.records.length >= 2 && e.y >= 100 && e.y < 360 ? 'list' : 'page'
+    if (this.screenIndex === 2) zone = this.records.length >= 3 && e.y >= 100 && e.y < 360 ? 'list' : 'page'
     this.lastTouchZone = zone
     this.touch = { x: e.x, y: e.y, zone, moved: false, at: Date.now() }
   },
@@ -390,7 +390,7 @@ Page({
     if (!this.records.length) { this.text(185, 70, 23, 'Нет сохранённых\nрезультатов', MUTED); return }
     this.listOffset = Math.min(this.listOffset, this.maxOffset())
     scene.list = this.add(ui.widget.VIEW_CONTAINER, {
-      x: 66, y: 100, w: 348, h: 260, scroll_enable: this.records.length >= 2 ? 1 : 0, bounce: 0, modal: 0,
+      x: 66, y: 100, w: 348, h: 260, scroll_enable: this.records.length >= 3 ? 1 : 0, bounce: 0, modal: 0,
       scroll_frame_func: () => {
         if (this.destroyed || this.scenes[2] !== scene || this.slide || this.screenIndex !== 2 || !this.isForeground()) return
         this.cancelHold()
