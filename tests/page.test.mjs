@@ -102,7 +102,7 @@ test('short drag snaps back, horizontal drag stays; reversing direction shows co
   p.touchDown({x:240,y:240});p.touchMove({x:240,y:180})
   assert.equal(p.slide.next,1)
   p.touchMove({x:240,y:300});assert.equal(p.slide.next,2);assert.ok(!p.scenes[1])
-  p.touchUp({x:240,y:300});h.settle();assert.equal(p.screenIndex,2)
+  p.touchUp({x:240,y:300});h.settle();assert.equal(p.screenIndex,0)
   p.onDestroy()
 })
 
@@ -234,7 +234,7 @@ test('scrollbar starts hidden, follows native scrolling/inertia, hides one secon
   h.elapse(700);list.setProperty('POS_Y',-60);list.scroll_frame_func()
   h.elapse(700);assert.equal(thumb.visible,true)
   list.scroll_complete_func();h.elapse(999);assert.equal(thumb.visible,true)
-  h.elapse(1);assert.equal(thumb.visible,false);assert.equal(scene.scrollTrack.visible,false)
+  h.elapse(1);assert.equal(thumb.visible,true);h.elapse(200);assert.ok(thumb.color<0x465056);h.elapse(200);assert.equal(thumb.visible,false);assert.equal(scene.scrollTrack.visible,false)
   assert.equal(h.activeTimers(),1) // only measurement, no idle scrollbar polling
   p.touchDown({x:200,y:200},'list');p.touchMove({x:200,y:150})
   assert.equal(thumb.visible,true)
@@ -261,8 +261,8 @@ test('indicator stays in the same overlay during drag, reversal, settle and canc
  const check=()=>{assert.equal(p.indicator,overlay);assert.equal(overlay.x,446);assert.equal(overlay.y,210);dots.forEach((w,i)=>{assert.equal(p.indicatorDots[i],w);assert.equal(w.center_y,12+i*18)})}
  p.touchDown({x:240,y:240});p.touchMove({x:240,y:150});check()
  p.touchMove({x:240,y:300});check();p.touchUp({x:240,y:300});h.elapse(80);check();h.settle();check()
- assert.equal(dots[2].color,0xeee6da)
- drag(h,50,-15);h.settle();check();h.go(1);check();assert.equal(dots[0].color,0xeee6da)
+ assert.equal(dots[0].color,0xeee6da)
+ drag(h,50,-15);h.settle();check();h.go(1);check();assert.equal(dots[1].color,0xeee6da)
  p.onDestroy()
 })
 
@@ -393,4 +393,44 @@ test('long press preserved; saving three and deleting back to two changes gestur
   h.go(-1);p.selected=p.records.map(r=>r.id);p.removeSelected()
   assert.equal(p.records.length,0);drag(h,200,80);h.settle();assert.equal(p.screenIndex,1)
   p.onDestroy()
+})
+
+for(const screen of [0,1,2]) for(const direction of [-1,1]) test('reversed touch cancels despite early OS gesture: '+screen+'/'+direction,()=>{
+ const h=harness({records:[result(1),result(2),result(3)]}),p=h.page
+ for(let i=0;i<screen;i++)h.go(1)
+ const y=screen===2?(direction<0?420:50):240
+ p.touchDown({x:240,y});p.touchMove({x:240,y:y+direction*100})
+ h.swipe(direction<0?'GESTURE_UP':'GESTURE_DOWN');assert.ok(!p.slideTimer);assert.ok(p.touch)
+ p.touchMove({x:240,y:y+direction*45})
+ h.swipe(direction<0?'GESTURE_UP':'GESTURE_DOWN');assert.ok(!p.slideTimer)
+ p.touchUp({x:240,y:y+direction*45});h.settle()
+ assert.equal(p.screenIndex,screen);assert.equal(p.scenes[screen].offset,0)
+ assert.equal(Object.keys(p.scenes).length,1)
+ // A fresh deliberate swipe still works.
+ drag(h,y,direction*80);h.settle();assert.equal(p.screenIndex,(screen+(direction<0?1:-1)+3)%3)
+ p.onDestroy();assert.equal(h.activeTimers(),0)
+})
+
+test('return to origin paints origin, small finger jitter does not cancel deliberate swipe',()=>{
+ const h=harness(),p=h.page
+ p.touchDown({x:240,y:240});p.touchMove({x:240,y:140});p.touchMove({x:240,y:240})
+ assert.equal(p.scenes[0].offset,0);p.touchUp({x:240,y:240});h.settle();assert.equal(p.screenIndex,0)
+ p.touchDown({x:240,y:240});p.touchMove({x:240,y:140});p.touchMove({x:240,y:145})
+ p.touchUp({x:240,y:143});h.settle();assert.equal(p.screenIndex,1);p.onDestroy()
+})
+
+for(const exit of ['screenOff','KEY_HOME','KEY_BACK','GESTURE_RIGHT','pageDestroy','appDestroy']) test('fade interruption and exit releases timer: '+exit,()=>{
+ const h=harness({records:[result(1),result(2),result(3)]}),p=h.page;h.go(-1)
+ h.nativeDrag(-30,true);h.elapse(1000);h.elapse(200)
+ const thumb=p.scrollThumb;assert.ok(thumb.color>0&&thumb.color<0x465056)
+ h.nativeDrag(-20,true);assert.equal(thumb.color,0x465056)
+ h.elapse(1000);h.elapse(200);assert.ok(thumb.visible)
+ if(exit==='screenOff')h.screen(2)
+ else if(exit==='pageDestroy')p.onDestroy()
+ else if(exit==='appDestroy')h.app.onDestroy()
+ else if(exit==='GESTURE_RIGHT')h.swipe(exit)
+ else h.key(exit)
+ assert.equal(h.activeTimers(),0);assert.equal(h.gps.running,false)
+ const activity=JSON.stringify(h.activity);h.elapse(3600000);h.lateFix();assert.equal(JSON.stringify(h.activity),activity)
+ p.onDestroy();assert.equal(h.widgets.length,0)
 })

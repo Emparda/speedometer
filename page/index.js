@@ -220,14 +220,11 @@ Page({
   swipe(direction) {
     if (this.destroyed || !this.isForeground()) return true
     if (this.slideTimer) return true
-    if (this.touch?.zone === 'list') return true
+    // Direction-only OS notifications may arrive before the finger is released.
+    // Raw touch owns the entire gesture; only CLICK_UP can commit it.
+    if (this.touch) return true
     if (Date.now() < (this.suppressGestureUntil || 0)) return true
-    if (this.slide) { this.finishSlide(Math.abs(this.slide.offset) >= 28); return true }
-    if (this.touch?.zone === 'page') {
-      this.prepareSlide(direction)
-      this.finishSlide(true)
-      return true
-    }
+    if (this.slide) { this.finishSlide(false); return true }
     // A direction-only event has no origin. Never let it escape the list.
     if (this.screenIndex === 2 && this.records.length >= 3) return true
     this.navigate(direction)
@@ -247,7 +244,7 @@ Page({
     this.suppressGestureUntil = 0
     if (this.screenIndex === 2) zone = this.records.length >= 3 && e.y >= 100 && e.y < 360 ? 'list' : 'page'
     this.lastTouchZone = zone
-    this.touch = { x: e.x, y: e.y, zone, moved: false, at: Date.now() }
+    this.touch = { x: e.x, y: e.y, zone, moved: false, peak: 0, reversed: false, at: Date.now() }
   },
   touchMove(e) {
     const touch = this.touch
@@ -258,7 +255,11 @@ Page({
       this.cancelHold()
     }
     if (touch.zone === 'list' && Math.abs(dy) > 8 && Math.abs(dy) > Math.abs(dx)) this.showScrollbar(this.scenes[2])
-    if (touch.zone === 'list' || Math.abs(dy) <= 8 || Math.abs(dy) <= Math.abs(dx) * 1.2) return
+    if (touch.zone === 'list') return
+    if (Math.abs(touch.peak) > 8 && (touch.peak - dy) * Math.sign(touch.peak) >= 12) touch.reversed = true
+    if (Math.abs(dy) > Math.abs(touch.peak)) touch.peak = dy
+    if (Math.abs(dy) <= 8) { if (this.slide) this.paintSlide(dy); return }
+    if (Math.abs(dy) <= Math.abs(dx) * 1.2) return
     this.prepareSlide(dy < 0 ? 1 : -1)
     this.paintSlide(Math.max(-480, Math.min(480, dy)))
   },
@@ -273,7 +274,7 @@ Page({
     this.touch = null
     this.lastTouchZone = touch.zone
     if (moved) this.suppressGestureUntil = Date.now() + 350
-    if (touch.zone === 'page' && this.slide) this.finishSlide(Math.abs(dy) >= 28 && Math.abs(dy) > Math.abs(dx) * 1.2)
+    if (touch.zone === 'page' && this.slide) this.finishSlide(!touch.reversed && Math.abs(dy) >= 28 && Math.abs(dy) > Math.abs(dx) * 1.2)
     return moved
   },
   bindTouch(w, zone = 'page') {
@@ -442,6 +443,11 @@ Page({
     const end = SCROLL_ARC_END - (sweep - span) * this.readOffset(scene) / this.maxOffset()
     scene.scrollThumb.setProperty(ui.prop.MORE, { start_angle: end - span, end_angle: end })
   },
+  scrollbarBrightness(scene, amount) {
+    const dim = color => [16, 8, 0].reduce((v, shift) => v | (Math.round(((color >> shift) & 255) * amount) << shift), 0)
+    scene.scrollTrack.setProperty(ui.prop.COLOR, dim(0x171d20))
+    scene.scrollThumb.setProperty(ui.prop.COLOR, dim(0x465056))
+  },
   hideScrollbar(scene) {
     if (!scene) return
     if (scene.scrollHideTimer != null) clearTimeout(scene.scrollHideTimer)
@@ -453,6 +459,7 @@ Page({
   showScrollbar(scene) {
     if (!scene?.scrollThumb || this.records.length <= 2 || this.scenes[2] !== scene ||
       this.screenIndex !== 2 || this.slide || !this.isForeground()) return
+    this.scrollbarBrightness(scene, 1)
     if (!scene.scrollVisible) {
       scene.scrollTrack.setProperty(ui.prop.VISIBLE, true)
       scene.scrollThumb.setProperty(ui.prop.VISIBLE, true)
@@ -461,7 +468,17 @@ Page({
     if (scene.scrollHideTimer != null) clearTimeout(scene.scrollHideTimer)
     scene.scrollHideTimer = setTimeout(() => {
       scene.scrollHideTimer = null
-      if (this.scenes[2] === scene) this.hideScrollbar(scene)
+      if (this.scenes[2] !== scene || !this.isForeground()) return
+      const started = Date.now()
+      const fade = () => {
+        scene.scrollHideTimer = null
+        if (this.scenes[2] !== scene || !this.isForeground()) return
+        const remaining = Math.max(0, 1 - (Date.now() - started) / 400)
+        if (!remaining) { this.hideScrollbar(scene); return }
+        this.scrollbarBrightness(scene, remaining)
+        scene.scrollHideTimer = setTimeout(fade, 40)
+      }
+      fade()
     }, 1000)
   },
   bindCard(w, id) {
