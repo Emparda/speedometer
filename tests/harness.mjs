@@ -7,7 +7,8 @@ const math = await moduleAt('measurement'), results = await moduleAt('results')
 export const RESULTS_KEY = results.RESULTS_KEY
 export const result = i => ({ id: 'r' + i, savedAt: 1793640000000 + i, max: 85, distance: 12480, elapsed: 1122000 })
 export function harness(options = {}) {
-  let page, app, now = 1000, nextTimer = 0
+  let page, app, now = 1000, nextTimer = 0, scrollLocked = true, rootOffset = 0
+  const scrollLocks = []
   const data = options.data || new Map(options.records ? [[RESULTS_KEY, JSON.stringify(options.records)]] : [])
   const writes = [], widgets = [], timers = new Map(), input = { key: null, gesture: null }, toasts = []
   const activity = { timerCallbacks: 0, uiWrites: 0, gpsReads: 0, gpsStarts: 0, gpsStops: 0 }
@@ -45,7 +46,7 @@ export function harness(options = {}) {
   const nop=()=>{}
   const context={ ...math,...results,ui,interaction,Date:Clock,LocalStorage:Storage,Geolocation:GPS,Screen:Display,
     getApp:()=>({_options:app}),App:a=>{app=a},Page:p=>{page=p},
-    setScrollLock:nop,setPageBrightTime:nop,resetPageBrightTime:nop,pauseDropWristScreenOff:nop,resetDropWristScreenOff:nop,
+    setScrollLock({lock}){scrollLocked=lock;scrollLocks.push(lock)},setPageBrightTime:nop,resetPageBrightTime:nop,pauseDropWristScreenOff:nop,resetDropWristScreenOff:nop,
     setInterval(cb,ms){const id=++nextTimer;timers.set(id,{cb,ms,at:now+ms,repeat:true});return id},
     setTimeout(cb,ms){const id=++nextTimer;timers.set(id,{cb,ms,at:now+ms,repeat:false});return id},
     clearInterval:id=>timers.delete(id),clearTimeout:id=>timers.delete(id)
@@ -54,7 +55,15 @@ export function harness(options = {}) {
   const src=readFileSync(new URL('../page/index.js',import.meta.url),'utf8').replace(/^import [^\n]*\n/gm,'')
   vm.runInNewContext(src,context);page.build()
   const advance=t=>{now=t;for(const [id,timer] of [...timers])if(timers.has(id)&&timer.at<=now){if(timer.repeat)timer.at=now+timer.ms;else timers.delete(id);activity.timerCallbacks++;timer.cb()}}
-  return {page,app,data,writes,widgets,gps,screenSensor,input,toasts,activity,
+  return {page,app,data,writes,widgets,gps,screenSensor,input,toasts,activity,scrollLocks,
+    rootOffset:()=>rootOffset,
+    nativeDrag(dy, list=false){
+      if(list && page.list) {
+        const w=page.list
+        w.setProperty('POS_Y',Math.max(-page.maxOffset(),Math.min(0,w.getProperty('POS_Y')+dy)))
+        w.scroll_frame_func()
+      } else if(!scrollLocked) rootOffset+=dy
+    },
     activeTimers:()=>timers.size,
     fix(){gps.callback?.()},lateFix(){lastFix?.()},
     click(label){const w=widgets.find(w=>w.type==='BUTTON'&&w.text===label);if(!w)throw Error('Missing button '+label);w.click_func()},

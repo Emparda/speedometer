@@ -276,3 +276,87 @@ test('exit freezes final frame, stops GPS once and repeated exits do not repeat 
  h.key('KEY_HOME');h.key('KEY_BACK');assert.equal(h.activity.uiWrites,writes);assert.equal(h.activity.gpsStops,1)
  p.onDestroy();h.app.onDestroy();assert.equal(h.activity.gpsStops,1);assert.equal(h.widgets.length,0)
 })
+
+for (const count of [0, 1, 2, 3, 19]) test('save then navigate without native root drift: '+count, () => {
+  const h=harness({records:Array.from({length:count},(_,i)=>result(i))}),p=h.page
+  h.go(1);h.click('Сохранить');assert.equal(p.records.length,count+1)
+  h.go(1);h.nativeDrag(-90)
+  assert.equal(h.rootOffset(),0)
+  assert.ok(h.scrollLocks.every(Boolean))
+  const list=p.list,offset=p.listOffset
+  p.touchDown({x:240,y:420});p.touchMove({x:240,y:340})
+  assert.equal(list.y,20);assert.equal(list.getProperty('POS_Y'),-offset || 0)
+  assert.equal(p.scenes[2].offset,-80)
+  list.scroll_frame_func();assert.equal(p.listOffset,offset)
+  p.touchUp({x:240,y:340});h.settle();assert.equal(p.screenIndex,0)
+  h.go(-1);h.nativeDrag(-70,true)
+  assert.equal(p.listOffset,Math.min(70,p.maxOffset()))
+  assert.equal(h.rootOffset(),0)
+  p.onDestroy()
+})
+
+test('lost release recovers on next contact; malformed moves cannot poison positions',()=>{
+  const h=harness(),p=h.page
+  p.touchDown({x:240,y:220});p.touchMove({x:240,y:150})
+  h.elapse(50);p.touchDown({x:240,y:220})
+  assert.equal(p.slide,null);assert.equal(p.scenes[0].offset,0)
+  p.touchMove({y:100});p.touchMove({x:240,y:NaN})
+  assert.equal(p.slide,null)
+  p.touchMove({x:240,y:120});p.touchUp({x:240,y:120});h.settle()
+  assert.equal(p.screenIndex,1);assert.equal(p.scenes[1].offset,0)
+  p.onDestroy()
+})
+
+test('six-pixel button margins accept taps but vertical drags navigate without activating',()=>{
+  const h=harness(),p=h.page
+  const margin=()=>h.widgets.find(w=>w.type==='FILL_RECT'&&w.x===163&&w.y===379&&w.w===154)
+  let m=margin();m.events.CLICK_DOWN({x:240,y:382});m.events.CLICK_UP({x:240,y:382})
+  assert.equal(p.running,false);assert.equal(p.startStop.w,142);assert.equal(p.startStop.h,52)
+  m.events.CLICK_DOWN({x:240,y:382});m.events.MOVE({x:240,y:300});m.events.CLICK_UP({x:240,y:300})
+  h.settle();assert.equal(p.screenIndex,1);assert.equal(p.running,false);assert.equal(p.records.length,0)
+  m=margin();m.events.CLICK_DOWN({x:240,y:382});m.events.CLICK_UP({x:240,y:382})
+  assert.equal(p.records.length,1)
+  p.onDestroy()
+})
+
+test('offscreen and deleted buttons cannot save or change measurement',()=>{
+  const h=harness(),p=h.page,stop=p.startStop
+  h.go(1);stop.click_func();assert.equal(p.running,true)
+  const save=h.widgets.find(w=>w.text==='Сохранить')
+  p.touchDown({x:240,y:200});p.touchMove({x:240,y:100})
+  save.click_func();p.saveSnapshot();assert.equal(p.records.length,0)
+  p.touchUp({x:240,y:100});h.settle();save.click_func();assert.equal(p.records.length,0)
+  p.onDestroy()
+})
+
+test('seeded mixed-event simulation: saving, deleting, gestures, GPS and screen sleep',()=>{
+  let seed=27841
+  const random=n=>{seed=(Math.imul(seed,1664525)+1013904223)>>>0;return seed%n}
+  for(let run=0;run<20;run++) {
+    const h=harness({records:Array.from({length:random(21)},(_,i)=>result(i))}),p=h.page
+    for(let step=0;step<250;step++) {
+      switch(random(10)) {
+        case 0:h.go(random(2)?1:-1);break
+        case 1:drag(h,p.screenIndex===2&&p.records.length?420:220,random(2)?80:-80);h.settle();break
+        case 2:p.saveSnapshot();break
+        case 3:if(p.records.length){p.selected=[p.records[random(p.records.length)].id];p.removeSelected()}break
+        case 4:if(p.list){h.nativeDrag(random(301)-150,true);p.list.scroll_complete_func()}break
+        case 5:h.screen(2);h.lateFix();assert.equal(h.activeTimers(),0);h.screen(1);break
+        case 6:if(!p.running)p.startMeasurement();h.elapse(1000);h.fix();break
+        case 7:p.touchDown({x:240,y:60});p.touchMove({x:240,y:120});h.go(-1);break
+        case 8:p.touchDown({x:240,y:60});p.touchMove({x:240,y:20});p.touchUp({x:240,y:20});h.swipe('GESTURE_DOWN');h.settle();break
+        case 9:p.stopMeasurement();break
+      }
+      h.settle()
+      assert.ok(!p.slide);assert.ok(!p.slideTimer)
+      assert.deepEqual(Object.keys(p.scenes),[String(p.screenIndex)])
+      assert.equal(p.scenes[p.screenIndex].offset,0)
+      assert.ok(h.widgets.every(w=>w.y===undefined||Number.isFinite(w.y)))
+      assert.ok(p.records.length<=20);assert.ok(p.listOffset>=0)
+      assert.ok(h.scrollLocks.every(Boolean));assert.equal(h.rootOffset(),0)
+      assert.equal(p.indicator.y,210)
+      assert.ok(h.widgets.length<115)
+    }
+    p.onDestroy();assert.equal(h.activeTimers(),0);assert.equal(h.widgets.length,0);assert.equal(h.gps.running,false)
+  }
+})

@@ -50,7 +50,8 @@ Page({
       } else this.render()
     }
     this.display.onChange(this.onScreenChange)
-    setScrollLock({ lock: this.screenIndex !== 2 || this.records.length === 0 })
+    // Only the card container scrolls natively; the root page never scrolls.
+    setScrollLock({ lock: true })
     this.registerInput()
     this.appCleanup = () => this.dispose()
     getApp()._options.globalData.stopMeasurement = this.appCleanup
@@ -176,7 +177,7 @@ Page({
       } else this.destroyScene(slide.next)
       this.moveScene(this.scenes[this.screenIndex], 0)
       this.adoptScene()
-      setScrollLock({ lock: this.screenIndex !== 2 || this.records.length === 0 })
+      setScrollLock({ lock: true })
       this.update()
     }, 20)
   },
@@ -189,12 +190,16 @@ Page({
       this.destroyScene(slide.next)
       this.moveScene(this.scenes[slide.from], 0)
     }
-    setScrollLock({ lock: this.screenIndex !== 2 || this.records.length === 0 })
+    setScrollLock({ lock: true })
   },
   moveScene(scene, offset) {
     if (!scene) return
     scene.offset = offset
-    scene.widgets.forEach(entry => entry.w.setProperty(entry.prop, entry.y + offset))
+    scene.widgets.forEach(entry => {
+      // BUTTON updates require the full geometry, including during animation.
+      if (entry.button) entry.w.setProperty(ui.prop.MORE, { ...entry.button, y: entry.y + offset })
+      else entry.w.setProperty(entry.prop, entry.y + offset)
+    })
   },
   destroyScene(index) {
     const scene = this.scenes[index]
@@ -234,16 +239,19 @@ Page({
     return Math.max(0, Math.min(this.maxOffset(), -scene.list.getProperty(ui.prop.POS_Y)))
   },
   touchDown(e, zone = 'page') {
-    if (!e || !Number.isFinite(e.y) || this.destroyed || !this.isForeground() || this.slideTimer) return
-    if (this.touch) return
+    if (!e || !Number.isFinite(e.x) || !Number.isFinite(e.y) || this.destroyed || !this.isForeground() || this.slideTimer) return
+    // A new contact recovers a drag whose CLICK_UP was lost by the OS.
+    // Ignore only same-frame duplicated DOWN events from overlapping widgets.
+    if (this.touch && this.touch.at === Date.now() && this.touch.x === e.x && this.touch.y === e.y) return
+    if (this.touch || this.slide) { this.cancelHold(); this.cancelTransition() }
     this.suppressGestureUntil = 0
     if (this.screenIndex === 2 && this.records.length > 0 && e.y >= 100 && e.y < 360) zone = 'list'
     this.lastTouchZone = zone
-    this.touch = { x: e.x, y: e.y, zone, moved: false }
+    this.touch = { x: e.x, y: e.y, zone, moved: false, at: Date.now() }
   },
   touchMove(e) {
     const touch = this.touch
-    if (!touch || !e || this.destroyed || !this.isForeground()) return
+    if (!touch || !e || !Number.isFinite(e.x) || !Number.isFinite(e.y) || this.slideTimer || this.destroyed || !this.isForeground()) return
     const dy = e.y - touch.y, dx = e.x - touch.x
     if (Math.abs(dy) > 8 || Math.abs(dx) > 8) {
       touch.moved = true
@@ -279,7 +287,8 @@ Page({
     const field = isCircle ? 'center_y' : 'y'
     const y = options[field] || 0
     const w = ui.createWidget(type, { ...options, [field]: y + scene.offset })
-    scene.widgets.push({ w, y, prop: isCircle ? ui.prop.CENTER_Y : ui.prop.Y })
+    scene.widgets.push({ w, y, prop: isCircle ? ui.prop.CENTER_Y : ui.prop.Y,
+      button: type === ui.widget.BUTTON ? { x: options.x, w: options.w, h: options.h } : null })
     // Decorative arcs have full-screen bounding boxes: let touches pass through.
     if (type === ui.widget.ARC) w.setEnable(false)
     else this.bindTouch(w, zone)
@@ -290,11 +299,30 @@ Page({
       align_h: ui.align.CENTER_H, align_v: ui.align.CENTER_V })
   },
   button(x, y, text, action) {
+    const scene = this.buildingScene || this.scenes[this.screenIndex]
+    const activate = () => {
+      if (!this.destroyed && !this.slide && this.scenes[this.screenIndex] === scene &&
+          this.isForeground() && !this.touch?.moved && Date.now() >= (this.suppressGestureUntil || 0)) action()
+    }
+    // Six pixels around the existing button; no new visible background.
+    // Separate strips preserve the native button and do not cover adjacent controls.
+    for (const box of [
+      { x: x - 6, y: y - 6, w: 154, h: 6 },
+      { x: x - 6, y: y + 52, w: 154, h: 6 },
+      { x: x - 6, y, w: 6, h: 52 },
+      { x: x + 142, y, w: 6, h: 52 }
+    ]) {
+      const hit = this.add(ui.widget.FILL_RECT, { ...box, color: 0 })
+      hit.addEventListener(ui.event.CLICK_UP, e => {
+        const contact = this.touch
+        const moved = this.touchUp(e)
+        if (contact && !moved && e && e.x >= x - 6 && e.x <= x + 148 &&
+            e.y >= y - 6 && e.y <= y + 58) activate()
+      })
+    }
     return this.add(ui.widget.BUTTON, { x, y, w: 142, h: 52, radius: 26, text,
       text_size: 22, color: CREAM, normal_color: BUTTON, press_color: BUTTON,
-      click_func: () => {
-        if (!this.destroyed && !this.slide && this.isForeground() && !this.touch?.moved && Date.now() >= (this.suppressGestureUntil || 0)) action()
-      } })
+      click_func: activate })
   },
   render() {
     if (this.destroyed || !this.isForeground()) return
@@ -318,7 +346,7 @@ Page({
       scene.startStop = this.button(169, 385, this.running ? 'Стоп' : 'Запуск', () => {
         if (this.running) this.stopMeasurement()
         else this.startMeasurement()
-        scene.startStop.setProperty(ui.prop.TEXT, this.running ? 'Стоп' : 'Запуск')
+        scene.startStop.setProperty(ui.prop.MORE, { x: 169, y: 385, w: 142, h: 52, text: this.running ? 'Стоп' : 'Запуск' })
         this.update()
       })
     } else if (scene.index === 1) {
@@ -362,7 +390,7 @@ Page({
     if (!this.records.length) { this.text(185, 70, 23, 'Нет сохранённых\nрезультатов', MUTED); return }
     this.listOffset = Math.min(this.listOffset, this.maxOffset())
     scene.list = this.add(ui.widget.VIEW_CONTAINER, {
-      x: 66, y: 100, w: 348, h: 260, scroll_enable: 1, bounce: 0,
+      x: 66, y: 100, w: 348, h: 260, scroll_enable: 1, bounce: 0, modal: 0,
       scroll_frame_func: () => {
         if (this.destroyed || this.scenes[2] !== scene || this.slide || this.screenIndex !== 2 || !this.isForeground()) return
         this.cancelHold()
@@ -470,7 +498,7 @@ Page({
     this.pressedId = null
   },
   saveSnapshot() {
-    if (this.destroyed || !this.isForeground()) return
+    if (this.destroyed || this.slide || !this.isForeground()) return
     if (this.storageError) { this.toast('Ошибка чтения данных'); return }
     if (this.running) this.measurement.tick(Date.now())
     const snapshot = this.measurement.snapshot()
@@ -487,6 +515,7 @@ Page({
     this.update()
   },
   removeSelected() {
+    if (this.destroyed || this.slide || !this.isForeground()) return
     if (!this.selected.length) { this.toast('Выберите карточки'); return }
     try {
       this.records = deleteResults(this.storage, this.records, this.selected)
