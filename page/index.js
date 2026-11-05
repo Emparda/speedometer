@@ -75,6 +75,14 @@ Page({
     } })
     interaction.onKey({ callback: (key, event) => {
       if (this.destroyed) return false
+      // Native scrolling can consume CLICK_UP. A physical key takes over the list
+      // contact, while active page drags and transitions keep their input guard.
+      if (this.screenIndex === 2 && this.touch?.zone === 'list' && !this.slide && this.isForeground() &&
+          (key === interaction.KEY_SELECT || key === interaction.KEY_UP || key === interaction.KEY_DOWN)) {
+        if (this.touch.moved) this.scenes[2].nativeMoving = true
+        this.touch = null
+        this.cancelHold()
+      }
       if (key === interaction.KEY_SELECT && this.screenIndex === 2) {
         if (this.isForeground() && !this.touch && !this.slide) this.resultsSelect(event)
         return true
@@ -180,7 +188,7 @@ Page({
   prepareSlide(direction) {
     if (this.slide && this.slide.direction === direction) return
     this.cancelTransition()
-    this.hideScrollbar(this.scenes[2])
+    if (!this.editing) this.hideScrollbar(this.scenes[2])
     setScrollLock({ lock: true })
     const next = (this.screenIndex + direction + 3) % 3
     this.createScene(next, direction * 480)
@@ -445,7 +453,8 @@ Page({
   },
   enterResultsSelection() {
     this.editing = true
-    this.focusIndex = Math.min(this.records.length - 1, Math.floor(this.readOffset() / 136))
+    this.listOffset = this.readOffset()
+    this.focusIndex = Math.min(this.records.length - 1, Math.floor(this.listOffset / 136))
     this.render()
   },
   resultsSelect(event) {
@@ -468,7 +477,9 @@ Page({
     } else if (this.list) {
       const offset = this.readOffset()
       this.listOffset = offset >= this.maxOffset() ? 0 : Math.min(this.maxOffset(), (Math.floor(offset / 136) + 1) * 136)
-      this.list.setProperty(ui.prop.POS_Y, -this.listOffset)
+      // Detach an inertial list before it can overwrite the key-selected position.
+      if (this.scenes[2].nativeMoving) this.render()
+      else this.list.setProperty(ui.prop.POS_Y, -this.listOffset)
       this.updateScrollbar(this.scenes[2])
       this.showScrollbar(this.scenes[2])
     }
@@ -486,12 +497,16 @@ Page({
         const previous = this.listOffset
         this.listOffset = this.readOffset(scene)
         this.updateScrollbar(scene)
-        if (this.listOffset !== previous) this.showScrollbar(scene)
+        if (this.listOffset !== previous) {
+          scene.nativeMoving = true
+          this.showScrollbar(scene)
+        }
       },
       scroll_complete_func: () => {
         if (this.destroyed || this.scenes[2] !== scene || this.slide || this.screenIndex !== 2 || !this.isForeground()) return
         this.listOffset = this.readOffset(scene)
         this.updateScrollbar(scene)
+        scene.nativeMoving = false
         if (scene.scrollVisible) this.showScrollbar(scene)
       }
     }, scene, 'list')
@@ -500,7 +515,7 @@ Page({
       const chosen = this.selected.indexOf(r.id) >= 0
       const card = (type, props) => {
         const w = scene.list.createWidget(type, props)
-        this.bindCard(w, r.id)
+        this.bindCard(w, r.id, scene)
       }
       card(ui.widget.FILL_RECT, { x: 0, y, w: 348, h: 124, radius: 18, color: chosen ? 0x303638 : BUTTON })
       if (this.editing && this.focusIndex === index) {
@@ -516,11 +531,12 @@ Page({
     })
     scene.list.setProperty(ui.prop.POS_Y, -this.listOffset)
     if (this.records.length > 2) {
-      const arc = { x: 16, y: 6, w: 448, h: 448, radius: 224, line_width: 3 }
+      const arc = { x: 16, y: 6, w: 448, h: 448, radius: 224, line_width: 4 }
       scene.scrollTrack = this.add(ui.widget.ARC, { ...arc, start_angle: SCROLL_ARC_START, end_angle: SCROLL_ARC_END, color: 0x171d20 })
       scene.scrollThumb = this.add(ui.widget.ARC, { ...arc, start_angle: SCROLL_ARC_START, end_angle: SCROLL_ARC_END, color: 0x465056 })
       this.updateScrollbar(scene)
-      this.hideScrollbar(scene)
+      if (this.editing) this.showScrollbar(scene)
+      else this.hideScrollbar(scene)
     }
     if (this.editing) {
       scene.deleteButton = this.button(90, 382, 'Удалить', () => {
@@ -560,6 +576,8 @@ Page({
       scene.scrollVisible = true
     }
     if (scene.scrollHideTimer != null) clearTimeout(scene.scrollHideTimer)
+    scene.scrollHideTimer = null
+    if (this.editing) return
     scene.scrollHideTimer = setTimeout(() => {
       scene.scrollHideTimer = null
       if (this.scenes[2] !== scene || !this.isForeground()) return
@@ -575,9 +593,10 @@ Page({
       fade()
     }, 1000)
   },
-  bindCard(w, id) {
+  bindCard(w, id, scene) {
+    const current = () => this.scenes[2] === scene && this.screenIndex === 2 && this.isForeground()
     w.addEventListener(ui.event.CLICK_DOWN, e => {
-      if (this.confirming || this.slide || this.destroyed || !this.isForeground()) return
+      if (!current() || this.confirming || this.slide) return
       this.touchDown(e, 'list')
       this.cancelHold()
       this.pressedId = id
@@ -592,9 +611,10 @@ Page({
         this.render()
       }, 650)
     })
-    w.addEventListener(ui.event.MOVE, e => { this.touchMove(e); this.cancelHold() })
-    w.addEventListener(ui.event.MOVE_OUT, e => { this.touchMove(e); this.cancelHold() })
+    w.addEventListener(ui.event.MOVE, e => { if (current()) { this.touchMove(e); this.cancelHold() } })
+    w.addEventListener(ui.event.MOVE_OUT, e => { if (current()) { this.touchMove(e); this.cancelHold() } })
     w.addEventListener(ui.event.CLICK_UP, e => {
+      if (!current()) return
       const tap = this.pressedId === id && !this.holdTriggered
       const moved = this.touchUp(e)
       this.cancelHold()

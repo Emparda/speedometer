@@ -496,3 +496,43 @@ test('inline confirmation keeps the same widgets, position and selection; BACK c
   h.key('KEY_BACK');assert.equal(p.editing,false);assert.equal(p.screenIndex,2)
   p.onDestroy()
 })
+
+for (const count of [3, 4, 20]) for (const completed of [false,true]) for (const released of [false,true]) {
+  test('native list to keys: '+[count,completed,released].join('/'),()=>{
+    const h=harness({records:Array.from({length:count},(_,i)=>result(i))}),p=h.page
+    h.go(-1)
+    const scroll=(amount)=>{
+      const card=h.cards()[0]
+      card.events.CLICK_DOWN({x:150,y:210});card.events.MOVE({x:150,y:170})
+      h.nativeDrag(amount,true)
+      if(released)card.events.CLICK_UP({x:150,y:170})
+      if(completed)p.list.scroll_complete_func()
+    }
+    scroll(-35);const oldList=p.list
+    h.key('KEY_SELECT');oldList.scroll_complete_func()
+    assert.equal(p.listOffset,136);assert.equal(p.readOffset(),136)
+    scroll(25);h.input.key('KEY_SELECT','KEY_EVENT_PRESS');h.input.key('KEY_SELECT','KEY_EVENT_LONG_PRESS')
+    assert.equal(p.editing,true);assert.equal(p.touch,null);assert.equal(p.readOffset(),111)
+    assert.equal(p.scrollThumb.visible,true);assert.equal(p.scrollThumb.line_width,4)
+    scroll(18);h.key('KEY_DOWN');assert.equal(p.focusIndex,1)
+    h.input.key('KEY_SELECT','KEY_EVENT_PRESS');h.key('KEY_SELECT')
+    assert.deepEqual(Array.from(p.selected),['r1'])
+    h.elapse(3000);assert.equal(p.scrollThumb.visible,true);assert.equal(h.activeTimers(),1)
+    for(let i=0;i<count;i++)h.key('KEY_DOWN')
+    assert.equal(p.readOffset(),p.maxOffset());assert.ok(Math.abs(p.scrollThumb.start_angle-150)<0.01)
+    p.askDelete();h.key('KEY_BACK');assert.ok(p.scrollThumb.visible)
+    h.key('KEY_BACK');assert.equal(p.editing,false);assert.equal(p.scrollThumb.visible,false)
+    h.screen(2);assert.equal(h.activeTimers(),0);p.onDestroy()
+  })
+}
+
+test('late release from retired card cannot cancel a new long press',()=>{
+  const h=harness({records:[result(1),result(2),result(3)]}),p=h.page;h.go(-1)
+  const old=h.cards()[0]
+  old.events.CLICK_DOWN({x:150,y:210});old.events.MOVE({x:150,y:155})
+  h.nativeDrag(-35,true);h.key('KEY_SELECT')
+  h.cards()[1].events.CLICK_DOWN({x:150,y:180})
+  old.events.CLICK_UP({x:150,y:155});h.elapse(650)
+  assert.equal(p.editing,true);assert.deepEqual(Array.from(p.selected),['r2'])
+  assert.equal(p.scrollThumb.visible,true);p.onDestroy();assert.equal(h.activeTimers(),0)
+})
