@@ -152,7 +152,7 @@ test('long press selects, swipe does not delete; choose multiple cards and delet
   assert.equal(p.editing, true); assert.deepEqual(Array.from(p.selected), ['r1'])
   card = h.cards()[1]; card.events.CLICK_DOWN(); card.events.CLICK_UP()
   assert.equal(p.selected.length, 2)
-  h.click('Удалить')
+  h.click('Удалить'); assert.equal(p.records.length,3); h.click('Да')
   assert.equal(p.records.length, 1); assert.equal(p.records[0].id, 'r3')
   assert.equal(JSON.parse(h.data.get(RESULTS_KEY)).length, 1)
   p.onDestroy()
@@ -433,4 +433,46 @@ for(const exit of ['screenOff','KEY_HOME','KEY_BACK','GESTURE_RIGHT','pageDestro
  assert.equal(h.activeTimers(),0);assert.equal(h.gps.running,false)
  const activity=JSON.stringify(h.activity);h.elapse(3600000);h.lateFix();assert.equal(JSON.stringify(h.activity),activity)
  p.onDestroy();assert.equal(h.widgets.length,0)
+})
+
+test('SELECT toggles speed, saves stats once per click and ignores transitions and sleep',()=>{
+  const h=harness(),p=h.page
+  h.key('KEY_SELECT');assert.equal(p.running,false)
+  h.input.key('KEY_SELECT','KEY_EVENT_RELEASE');assert.equal(p.running,false)
+  h.key('KEY_SELECT');assert.equal(p.running,true);assert.equal(p.measurement.elapsed,0)
+  h.key('KEY_DOWN');h.key('KEY_SELECT');assert.equal(p.running,true);assert.equal(p.records.length,0)
+  h.settle();h.key('KEY_SELECT');assert.equal(p.records.length,1);assert.equal(p.running,true)
+  h.go(1);assert.equal(h.key('KEY_SELECT'),true);assert.equal(p.records.length,1)
+  h.go(1);h.screen(2);h.key('KEY_SELECT');assert.equal(h.gps.running,false)
+  p.onDestroy()
+})
+
+test('hardware edit, cancel and confirm require distinct key presses',()=>{
+  const h=harness({records:[result(1),result(2),result(3),result(4)]}),p=h.page
+  h.go(-1)
+  const select=(long=false)=>{
+    h.input.key('KEY_SELECT','KEY_EVENT_PRESS')
+    h.input.key('KEY_SELECT',long?'KEY_EVENT_LONG_PRESS':'KEY_EVENT_CLICK')
+    h.input.key('KEY_SELECT','KEY_EVENT_RELEASE')
+  }
+  select();assert.equal(p.listOffset,136)
+  select();assert.equal(p.listOffset,p.maxOffset())
+  select();assert.equal(p.listOffset,0)
+  select(true);assert.equal(p.editing,true);assert.equal(p.focusIndex,0)
+  h.key('KEY_DOWN');select();assert.deepEqual(Array.from(p.selected),['r2'])
+  select(true);h.key('KEY_SELECT');assert.equal(p.confirming,true);assert.equal(h.writes.length,0)
+  h.key('KEY_BACK');assert.equal(p.editing,true);assert.equal(p.confirming,false)
+  select(true);select();assert.equal(h.writes.length,1);assert.equal(p.records.some(r=>r.id==='r2'),false)
+  h.key('KEY_BACK');assert.equal(p.editing,false);assert.equal(p.screenIndex,2)
+  p.onDestroy()
+})
+
+test('touch confirmation can be cancelled and swiping its buttons never confirms',()=>{
+  const h=harness({records:[result(1),result(2)]}),p=h.page;h.go(-1)
+  h.cards()[0].events.CLICK_DOWN({x:160,y:170});h.elapse(650)
+  h.click('Удалить');assert.ok(h.widgets.some(w=>w.text==='Точно?'))
+  drag(h,400,-90);h.click('Да');assert.equal(h.writes.length,0);h.settle()
+  h.click('Отмена');assert.equal(p.confirming,false);assert.deepEqual(Array.from(p.selected),['r1'])
+  h.click('Удалить');h.click('Да');assert.equal(h.writes.length,1);assert.equal(p.records[0].id,'r2')
+  p.onDestroy()
 })

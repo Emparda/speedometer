@@ -20,6 +20,7 @@ Page({
     this.listOffset = 0
     this.selected = []
     this.editing = false
+    this.confirming = false
     this.destroyed = false
     this.running = false
     this.serial = 0
@@ -44,6 +45,7 @@ Page({
     this.onScreenChange = () => {
       if (this.destroyed || this.exiting) return
       if (!this.isForeground()) {
+        this.confirming = false
         this.stopMeasurement()
         this.cancelHold()
         this.stopLoading()
@@ -73,6 +75,33 @@ Page({
     } })
     interaction.onKey({ callback: (key, event) => {
       if (this.destroyed) return false
+      if (key === interaction.KEY_SELECT && this.screenIndex === 2) {
+        if (this.isForeground() && !this.touch && !this.slide) this.resultsSelect(event)
+        return true
+      }
+      if (key === interaction.KEY_BACK && this.screenIndex === 2 && this.isForeground()) {
+        if (this.editing) {
+          if (event === interaction.KEY_EVENT_CLICK) {
+            this.closeResultsMode()
+            this.backHandledAt = Date.now()
+          }
+          return true
+        }
+        if (event === interaction.KEY_EVENT_RELEASE && Date.now() - this.backHandledAt < 500) return true
+      }
+      if (this.screenIndex === 2 && this.editing && (key === interaction.KEY_UP || key === interaction.KEY_DOWN)) {
+        if (event === interaction.KEY_EVENT_CLICK && this.isForeground() && !this.confirming && !this.slide && !this.touch) {
+          this.moveFocus(key === interaction.KEY_DOWN ? 1 : -1)
+        }
+        return true
+      }
+      if (key === interaction.KEY_SELECT && this.screenIndex < 2) {
+        if (event === interaction.KEY_EVENT_CLICK && this.isForeground() && !this.touch && !this.slide) {
+          if (this.screenIndex === 0) this.toggleMeasurement()
+          else this.saveSnapshot()
+        }
+        return true
+      }
       if (key === interaction.KEY_UP || key === interaction.KEY_DOWN) {
         if (event === interaction.KEY_EVENT_CLICK && this.isForeground()) this.navigate(key === interaction.KEY_DOWN ? 1 : -1)
         return true
@@ -82,6 +111,13 @@ Page({
       }
       return false
     } })
+  },
+  toggleMeasurement() {
+    const scene = this.scenes[0]
+    if (this.running) this.stopMeasurement()
+    else this.startMeasurement()
+    scene.startStop.setProperty(ui.prop.MORE, { x: 169, y: 385, w: 142, h: 52, text: this.running ? 'Стоп' : 'Запуск' })
+    this.update()
   },
   startMeasurement() {
     if (this.destroyed || !this.isForeground()) return
@@ -173,7 +209,7 @@ Page({
       if (commit) {
         this.screenIndex = slide.next
         this.destroyScene(slide.from)
-        if (slide.from === 2) { this.editing = false; this.selected = [] }
+        if (slide.from === 2) { this.editing = false; this.confirming = false; this.selected = [] }
       } else this.destroyScene(slide.next)
       this.moveScene(this.scenes[this.screenIndex], 0)
       this.adoptScene()
@@ -222,7 +258,7 @@ Page({
     if (this.slideTimer) return true
     // Direction-only OS notifications may arrive before the finger is released.
     // Raw touch owns the entire gesture; only CLICK_UP can commit it.
-    if (this.touch) return true
+    if (this.confirming || this.touch) return true
     if (Date.now() < (this.suppressGestureUntil || 0)) return true
     if (this.slide) { this.finishSlide(false); return true }
     // A direction-only event has no origin. Never let it escape the list.
@@ -255,7 +291,7 @@ Page({
       this.cancelHold()
     }
     if (touch.zone === 'list' && Math.abs(dy) > 8 && Math.abs(dy) > Math.abs(dx)) this.showScrollbar(this.scenes[2])
-    if (touch.zone === 'list') return
+    if (this.confirming || touch.zone === 'list') return
     if (Math.abs(touch.peak) > 8 && (touch.peak - dy) * Math.sign(touch.peak) >= 12) touch.reversed = true
     if (Math.abs(dy) > Math.abs(touch.peak)) touch.peak = dy
     if (Math.abs(dy) <= 8) { if (this.slide) this.paintSlide(dy); return }
@@ -344,12 +380,7 @@ Page({
       scene.value = this.text(131, 180, 170, '')
       this.text(328, 35, 28, 'км/ч', MUTED)
       scene.status = this.text(275, 24, 18, '', MUTED)
-      scene.startStop = this.button(169, 385, this.running ? 'Стоп' : 'Запуск', () => {
-        if (this.running) this.stopMeasurement()
-        else this.startMeasurement()
-        scene.startStop.setProperty(ui.prop.MORE, { x: 169, y: 385, w: 142, h: 52, text: this.running ? 'Стоп' : 'Запуск' })
-        this.update()
-      })
+      scene.startStop = this.button(169, 385, this.running ? 'Стоп' : 'Запуск', () => this.toggleMeasurement())
     } else if (scene.index === 1) {
       this.text(66, 26, 19, 'МАКСИМУМ · КМ/Ч', MUTED)
       scene.maximum = this.text(94, 60, 48, '')
@@ -385,7 +416,63 @@ Page({
     this.indicator = null
     this.indicatorDots = null
   },
+  closeResultsMode() {
+    if (this.confirming) this.confirming = false
+    else { this.editing = false; this.selected = [] }
+    this.render()
+  },
+  askDelete() {
+    if (!this.selected.length) { this.toast('Выберите карточки'); return }
+    this.confirming = true
+    this.render()
+  },
+  confirmDelete() {
+    if (!this.confirming) return
+    this.confirming = false
+    this.removeSelected()
+    // A storage error keeps the previous list, ready for a new attempt.
+    if (!this.list && this.editing) this.render()
+  },
+  moveFocus(direction) {
+    this.focusIndex = Math.max(0, Math.min(this.records.length - 1, this.focusIndex + direction))
+    const top = this.focusIndex * 136
+    this.listOffset = Math.max(0, Math.min(this.maxOffset(), Math.max(top + 124 - 260, Math.min(top, this.readOffset()))))
+    this.render()
+  },
+  resultsSelect(event) {
+    if (!this.records.length) return
+    if (event === interaction.KEY_EVENT_PRESS) this.selectHeld = false
+    if (event === interaction.KEY_EVENT_LONG_PRESS && !this.selectHeld) {
+      this.selectHeld = true
+      if (this.confirming) return
+      if (this.editing) this.askDelete()
+      else {
+        this.editing = true
+        this.focusIndex = Math.min(this.records.length - 1, Math.floor(this.readOffset() / 136))
+        this.render()
+      }
+    }
+    if (event !== interaction.KEY_EVENT_CLICK || this.selectHeld) return
+    if (this.confirming) { this.confirmDelete(); return }
+    if (this.editing) {
+      const id = this.records[this.focusIndex].id
+      this.selected = this.selected.includes(id) ? this.selected.filter(x => x !== id) : this.selected.concat([id])
+      this.render()
+    } else if (this.maxOffset() > 0 && this.list) {
+      const offset = this.readOffset()
+      this.listOffset = offset >= this.maxOffset() ? 0 : Math.min(this.maxOffset(), (Math.floor(offset / 136) + 1) * 136)
+      this.list.setProperty(ui.prop.POS_Y, -this.listOffset)
+      this.updateScrollbar(this.scenes[2])
+      this.showScrollbar(this.scenes[2])
+    }
+  },
   renderResults(scene) {
+    if (this.confirming) {
+      this.text(185, 80, 32, 'Точно?')
+      this.button(90, 382, 'Отмена', () => this.closeResultsMode())
+      this.button(248, 382, 'Да', () => this.confirmDelete())
+      return
+    }
     this.text(43, 30, 22, this.editing ? 'ВЫБРАТЬ' : 'РЕЗУЛЬТАТЫ', MUTED)
     if (this.storageError) { this.text(185, 80, 22, 'Ошибка чтения\nсохранённых данных'); return }
     if (!this.records.length) { this.text(185, 70, 23, 'Нет сохранённых\nрезультатов', MUTED); return }
@@ -415,11 +502,14 @@ Page({
         this.bindCard(w, r.id)
       }
       card(ui.widget.FILL_RECT, { x: 0, y, w: 348, h: 124, radius: 18, color: chosen ? 0x303638 : BUTTON })
+      if (this.editing && this.focusIndex === index) {
+        card(ui.widget.STROKE_RECT, { x: 1, y: y + 1, w: 346, h: 122, radius: 18, line_width: 2, color: MUTED })
+      }
       const label = (offset, h, size, text, color) => card(ui.widget.TEXT, {
         x: 10, y: y + offset, w: 328, h, text_size: size, text, color,
         align_h: ui.align.CENTER_H, align_v: ui.align.CENTER_V
       })
-      label(15, 26, 20, dateLabel(r.savedAt), CREAM)
+      label(15, 26, 20, (chosen ? '✓  ' : '') + dateLabel(r.savedAt), CREAM)
       label(47, 30, 22, 'Макс. ' + Math.round(r.max) + ' км/ч  ·  ' + (r.distance / 1000).toFixed(2) + ' км', CREAM)
       label(83, 26, 22, duration(r.elapsed), MUTED)
     })
@@ -432,7 +522,7 @@ Page({
       this.hideScrollbar(scene)
     }
     if (this.editing) {
-      this.button(90, 382, 'Удалить', () => this.removeSelected())
+      this.button(90, 382, 'Удалить', () => this.askDelete())
       this.button(248, 382, 'Готово', () => { this.editing = false; this.selected = []; this.render() })
     } else this.text(390, 27, 18, 'Сохранено: ' + this.records.length + ' / 20', MUTED)
   },
@@ -493,6 +583,7 @@ Page({
         if (this.destroyed || this.pressedId !== id || !this.isForeground()) return
         this.holdTriggered = true
         this.editing = true
+        this.focusIndex = this.records.findIndex(r => r.id === id)
         if (this.selected.indexOf(id) < 0) this.selected.push(id)
         this.render()
       }, 650)
@@ -504,6 +595,7 @@ Page({
       const moved = this.touchUp(e)
       this.cancelHold()
       if (tap && !moved && this.editing) {
+        this.focusIndex = this.records.findIndex(r => r.id === id)
         this.selected = this.selected.indexOf(id) >= 0 ? this.selected.filter(x => x !== id) : this.selected.concat([id])
         this.render()
       }
@@ -538,6 +630,7 @@ Page({
       this.records = deleteResults(this.storage, this.records, this.selected)
       this.selected = []
       this.lastSavedSignature = ''
+      this.focusIndex = Math.max(0, Math.min(this.focusIndex || 0, this.records.length - 1))
       if (!this.records.length) this.editing = false
       this.render()
     } catch (_) { this.toast('Ошибка удаления') }
