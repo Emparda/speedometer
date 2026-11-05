@@ -152,7 +152,7 @@ test('long press selects, swipe does not delete; choose multiple cards and delet
   assert.equal(p.editing, true); assert.deepEqual(Array.from(p.selected), ['r1'])
   card = h.cards()[1]; card.events.CLICK_DOWN(); card.events.CLICK_UP()
   assert.equal(p.selected.length, 2)
-  h.click('Удалить'); assert.equal(p.records.length,3); h.click('Да')
+  h.click('Удалить'); assert.equal(p.records.length,3); h.click('Точно?')
   assert.equal(p.records.length, 1); assert.equal(p.records[0].id, 'r3')
   assert.equal(JSON.parse(h.data.get(RESULTS_KEY)).length, 1)
   p.onDestroy()
@@ -471,8 +471,28 @@ test('touch confirmation can be cancelled and swiping its buttons never confirms
   const h=harness({records:[result(1),result(2)]}),p=h.page;h.go(-1)
   h.cards()[0].events.CLICK_DOWN({x:160,y:170});h.elapse(650)
   h.click('Удалить');assert.ok(h.widgets.some(w=>w.text==='Точно?'))
-  drag(h,400,-90);h.click('Да');assert.equal(h.writes.length,0);h.settle()
+  drag(h,400,-90);h.click('Точно?');assert.equal(h.writes.length,0);h.settle()
   h.click('Отмена');assert.equal(p.confirming,false);assert.deepEqual(Array.from(p.selected),['r1'])
-  h.click('Удалить');h.click('Да');assert.equal(h.writes.length,1);assert.equal(p.records[0].id,'r2')
+  h.click('Удалить');h.click('Точно?');assert.equal(h.writes.length,1);assert.equal(p.records[0].id,'r2')
+  p.onDestroy()
+})
+
+for(const count of [0,1,2,3,4]) test('SELECT from results with '+count+' cards',()=>{
+  const h=harness({records:Array.from({length:count},(_,i)=>result(i))}),p=h.page
+  h.go(-1);h.key('KEY_SELECT')
+  assert.equal(p.editing,count===1||count===2);assert.equal(p.listOffset,count>=3?136:0)
+  assert.equal(p.selected.length,0);assert.equal(h.writes.length,0);p.onDestroy()
+})
+
+test('inline confirmation keeps the same widgets, position and selection; BACK cancels then finishes',()=>{
+  const h=harness({records:[result(1),result(2)]}),p=h.page;h.go(-1)
+  h.key('KEY_SELECT');h.key('KEY_SELECT')
+  const button=p.scenes[2].deleteButton,list=p.list
+  h.click('Удалить');assert.equal(button.text,'Точно?');assert.equal(p.list,list)
+  assert.equal(p.scenes[2].deleteButton,button);assert.deepEqual([button.x,button.y],[90,382])
+  h.cards()[1].events.CLICK_DOWN({x:150,y:270});h.elapse(700);h.cards()[1].events.CLICK_UP({x:150,y:270})
+  assert.deepEqual(Array.from(p.selected),['r1']);assert.equal(h.writes.length,0)
+  h.key('KEY_BACK');assert.equal(button.text,'Удалить');assert.equal(p.list,list)
+  h.key('KEY_BACK');assert.equal(p.editing,false);assert.equal(p.screenIndex,2)
   p.onDestroy()
 })

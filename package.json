@@ -1,6 +1,6 @@
 {
   "name": "speedometer-t-rex-3",
-  "version": "1.3.3",
+  "version": "1.3.4",
   "private": true,
   "scripts": {
     "test": "node tests/measurement.test.mjs && node tests/results.test.mjs && node tests/page.test.mjs && node tests/power.test.mjs",

@@ -417,26 +417,35 @@ Page({
     this.indicatorDots = null
   },
   closeResultsMode() {
-    if (this.confirming) this.confirming = false
-    else { this.editing = false; this.selected = [] }
+    if (this.confirming) { this.setDeleteConfirmation(false); return }
+    this.editing = false
+    this.selected = []
     this.render()
   },
   askDelete() {
     if (!this.selected.length) { this.toast('Выберите карточки'); return }
-    this.confirming = true
-    this.render()
+    this.setDeleteConfirmation(true)
+  },
+  setDeleteConfirmation(active) {
+    this.confirming = active
+    const scene = this.scenes[2]
+    scene.deleteButton.setProperty(ui.prop.MORE, { x: 90, y: 382, w: 142, h: 52, text: active ? 'Точно?' : 'Удалить' })
+    scene.doneButton.setProperty(ui.prop.MORE, { x: 248, y: 382, w: 142, h: 52, text: active ? 'Отмена' : 'Готово' })
   },
   confirmDelete() {
     if (!this.confirming) return
-    this.confirming = false
+    this.setDeleteConfirmation(false)
     this.removeSelected()
-    // A storage error keeps the previous list, ready for a new attempt.
-    if (!this.list && this.editing) this.render()
   },
   moveFocus(direction) {
     this.focusIndex = Math.max(0, Math.min(this.records.length - 1, this.focusIndex + direction))
     const top = this.focusIndex * 136
     this.listOffset = Math.max(0, Math.min(this.maxOffset(), Math.max(top + 124 - 260, Math.min(top, this.readOffset()))))
+    this.render()
+  },
+  enterResultsSelection() {
+    this.editing = true
+    this.focusIndex = Math.min(this.records.length - 1, Math.floor(this.readOffset() / 136))
     this.render()
   },
   resultsSelect(event) {
@@ -446,11 +455,7 @@ Page({
       this.selectHeld = true
       if (this.confirming) return
       if (this.editing) this.askDelete()
-      else {
-        this.editing = true
-        this.focusIndex = Math.min(this.records.length - 1, Math.floor(this.readOffset() / 136))
-        this.render()
-      }
+      else this.enterResultsSelection()
     }
     if (event !== interaction.KEY_EVENT_CLICK || this.selectHeld) return
     if (this.confirming) { this.confirmDelete(); return }
@@ -458,7 +463,9 @@ Page({
       const id = this.records[this.focusIndex].id
       this.selected = this.selected.includes(id) ? this.selected.filter(x => x !== id) : this.selected.concat([id])
       this.render()
-    } else if (this.maxOffset() > 0 && this.list) {
+    } else if (this.records.length <= 2) {
+      this.enterResultsSelection()
+    } else if (this.list) {
       const offset = this.readOffset()
       this.listOffset = offset >= this.maxOffset() ? 0 : Math.min(this.maxOffset(), (Math.floor(offset / 136) + 1) * 136)
       this.list.setProperty(ui.prop.POS_Y, -this.listOffset)
@@ -467,12 +474,6 @@ Page({
     }
   },
   renderResults(scene) {
-    if (this.confirming) {
-      this.text(185, 80, 32, 'Точно?')
-      this.button(90, 382, 'Отмена', () => this.closeResultsMode())
-      this.button(248, 382, 'Да', () => this.confirmDelete())
-      return
-    }
     this.text(43, 30, 22, this.editing ? 'ВЫБРАТЬ' : 'РЕЗУЛЬТАТЫ', MUTED)
     if (this.storageError) { this.text(185, 80, 22, 'Ошибка чтения\nсохранённых данных'); return }
     if (!this.records.length) { this.text(185, 70, 23, 'Нет сохранённых\nрезультатов', MUTED); return }
@@ -522,8 +523,11 @@ Page({
       this.hideScrollbar(scene)
     }
     if (this.editing) {
-      this.button(90, 382, 'Удалить', () => this.askDelete())
-      this.button(248, 382, 'Готово', () => { this.editing = false; this.selected = []; this.render() })
+      scene.deleteButton = this.button(90, 382, 'Удалить', () => {
+        if (this.confirming) this.confirmDelete()
+        else this.askDelete()
+      })
+      scene.doneButton = this.button(248, 382, 'Готово', () => this.closeResultsMode())
     } else this.text(390, 27, 18, 'Сохранено: ' + this.records.length + ' / 20', MUTED)
   },
   updateScrollbar(scene) {
@@ -573,7 +577,7 @@ Page({
   },
   bindCard(w, id) {
     w.addEventListener(ui.event.CLICK_DOWN, e => {
-      if (this.slide || this.destroyed || !this.isForeground()) return
+      if (this.confirming || this.slide || this.destroyed || !this.isForeground()) return
       this.touchDown(e, 'list')
       this.cancelHold()
       this.pressedId = id
