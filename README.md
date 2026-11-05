@@ -24,4 +24,4 @@ GPS и таймеры останавливаются при «Стоп», вык
 В Zepp откройте режим разработчика → Mini Program → сканер и отсканируйте код.  
 После установки откройте «Спидометр» на часах.
 
-<img width="306" height="308" alt="QR" src="https://github.com/user-attachments/assets/138482b6-df8f-42e3-b627-2c1bf7f1953d" />
+<img width="306" height="307" alt="QR" src="https://github.com/user-attachments/assets/12965820-33a5-4b50-b15d-84d80840abfb" />
