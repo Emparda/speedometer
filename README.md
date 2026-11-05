@@ -1,4 +1,4 @@
-# Спидометр 1.3.2 — Amazfit T-Rex 3
+# Спидометр 1.3.3 — Amazfit T-Rex 3
 
 <img width="400" alt="speedometer-preview" src="https://github.com/user-attachments/assets/ac7165cd-d120-4337-8042-414eda8a8a25" />
 
